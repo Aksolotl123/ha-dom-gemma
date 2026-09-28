@@ -86,25 +86,61 @@ _INFINITIVE = {"unlock": "otworzyć", "lock": "zamknąć", "turn_on": "włączy�
 
 @dataclass
 class EntityInfo:
-    name: str
+    name: str                  # mianownik: „lampka przy biurku”
     state: str
     unit: str | None = None
     device_class: str | None = None
+    acc: str | None = None     # biernik: „lampkę przy biurku” (z pakietu serwera; brak -> name)
 
 
-def _names(ids: list[str], info: dict[str, EntityInfo]) -> str:
-    names = []
-    for e in ids:
-        n = info[e].name if e in info else e
-        if n not in names:  # np. dwa kanały L1+L2 z tą samą nazwą
+@dataclass
+class DeviceName:
+    ids: frozenset[str]
+    nom: str
+    acc: str
+
+
+def names_from_server(devices: dict) -> list[DeviceName]:
+    """/v1/devices serwera: {uchwyt: {"ids", "name", "acc", ...}} -> lista nazw urządzeń."""
+    out = []
+    for d in devices.values():
+        if isinstance(d, dict) and d.get("ids") and d.get("name"):
+            out.append(DeviceName(frozenset(d["ids"]), d["name"], d.get("acc") or d["name"]))
+    return out
+
+
+def entity_names(devices: list[DeviceName]) -> dict[str, DeviceName]:
+    """Encja -> nazwa najmniejszego urządzenia, które ją zawiera (kanał L1 -> „kuchnia 2”, nie „światło w kuchni”)."""
+    out: dict[str, DeviceName] = {}
+    for d in sorted(devices, key=lambda d: -len(d.ids)):
+        for e in d.ids:
+            out[e] = d
+    return out
+
+
+def _names(ids: list[str], info: dict[str, EntityInfo], devices: list[DeviceName] | None = None,
+           case: str = "acc") -> str:
+    """Nazwy do zdania. Najpierw całe urządzenia z pakietu (L1+L2 = „światło w kuchni”), potem pojedyncze encje."""
+    remaining = list(ids)
+    names: list[str] = []
+    for d in sorted(devices or [], key=lambda d: -len(d.ids)):
+        if d.ids and d.ids <= set(remaining):
+            n = d.acc if case == "acc" else d.nom
+            if n not in names:
+                names.append(n)
+            remaining = [e for e in remaining if e not in d.ids]
+    for e in remaining:
+        i = info.get(e)
+        n = ((i.acc or i.name) if case == "acc" else i.name) if i else e
+        if n not in names:  # np. dwa kanały z tą samą nazwą w HA
             names.append(n)
     return ", ".join(names)
 
 
-def action_sentence(a: dict, info: dict[str, EntityInfo]) -> str:
+def action_sentence(a: dict, info: dict[str, EntityInfo], devices: list[DeviceName] | None = None) -> str:
     domain, _, name = a["service"].partition(".")
     data = a.get("data") or {}
-    who = _names(a["entity_id"], info)
+    who = _names(a["entity_id"], info, devices)
     if "brightness_pct" in data:
         return f"Ustawiam {who} na {data['brightness_pct']}%"
     if "brightness_step_pct" in data:
@@ -114,14 +150,15 @@ def action_sentence(a: dict, info: dict[str, EntityInfo]) -> str:
     return f"{_VERB.get(name, 'Wykonuję')} {who}"
 
 
-def confirmation_question(actions: list[dict], info: dict[str, EntityInfo]) -> str:
+def confirmation_question(actions: list[dict], info: dict[str, EntityInfo],
+                          devices: list[DeviceName] | None = None) -> str:
     parts = []
     for a in actions:
         if a.get("action") != "call_service":
             continue
         domain, _, name = a["service"].partition(".")
         verb = "uruchomić" if domain == "script" else _INFINITIVE.get(name, "wykonać")
-        parts.append(f"{verb} {_names(a['entity_id'], info)}")
+        parts.append(f"{verb} {_names(a['entity_id'], info, devices)}")
     return f"Czy na pewno {' i '.join(parts)}? Powiedz tak albo nie."
 
 
@@ -150,6 +187,8 @@ def state_sentence(entity_id: str, info: dict[str, EntityInfo]) -> str:
     i = info.get(entity_id)
     if i is None:
         return f"{entity_id}: nie znalazłem"
+    if i.state in ("unavailable", "unknown"):
+        return f"{i.name}: {_GENERIC[i.state]}"
     if i.unit:
         return f"{i.name}: {_number(i.state)} {i.unit}"
     word = _STATE_WORDS.get(i.device_class or "", {}).get(i.state) or _GENERIC.get(i.state, i.state)

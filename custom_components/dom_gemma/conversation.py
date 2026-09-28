@@ -44,6 +44,8 @@ class DomGemmaAgent(conversation.ConversationEntity):
                                   "manufacturer": "lokalny model"}
         # conversation_id -> (czas, akcje czekające na "tak")
         self._pending: dict[str, tuple[float, list[dict]]] = {}
+        # polskie nazwy urządzeń z serwera (mianownik/biernik); None = jeszcze nie pobrane
+        self._devices: list[logic.DeviceName] | None = None
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -67,6 +69,8 @@ class DomGemmaAgent(conversation.ConversationEntity):
 
         try:
             result = await self._ask_server(user_input.text)
+            if self._devices is None:
+                self._devices = await self._fetch_names()
         except ServerUnavailable as err:
             _LOGGER.warning("DomGemma Server niedostępny (%s)", err)
             if self.entry.options.get(CONF_FALLBACK, True):
@@ -94,7 +98,7 @@ class DomGemmaAgent(conversation.ConversationEntity):
 
         if result.get("needs_confirmation"):
             self._pending[conv_id] = (time.monotonic(), actions)
-            question = logic.confirmation_question(actions, self._info(actions))
+            question = logic.confirmation_question(actions, self._info(actions), self._devices)
             return self._reply(user_input, chat_log, response, question, keep_listening=True)
 
         speech = await self._execute(actions, user_input)
@@ -114,6 +118,19 @@ class DomGemmaAgent(conversation.ConversationEntity):
         except (aiohttp.ClientError, TimeoutError) as err:
             raise ServerUnavailable(type(err).__name__) from err
 
+    async def _fetch_names(self) -> list[logic.DeviceName] | None:
+        """Nazwy z /v1/devices. Błąd nie blokuje polecenia - wtedy zostają nazwy encji z HA (spróbujemy ponownie)."""
+        try:
+            async with asyncio.timeout(5):
+                async with async_get_clientsession(self.hass).get(
+                        f"{self.entry.data[CONF_URL]}/v1/devices",
+                        headers={"Authorization": f"Bearer {self.entry.data[CONF_TOKEN]}"}) as r:
+                    if r.status == 200:
+                        return logic.names_from_server(await r.json())
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Nie pobrano nazw urządzeń: %s", err)
+        return None
+
     def _exposed(self, actions: list[dict]) -> set[str] | None:
         if not self.entry.options.get(CONF_REQUIRE_EXPOSED, False):
             return None
@@ -121,11 +138,15 @@ class DomGemmaAgent(conversation.ConversationEntity):
         return {e for e in ids if async_should_expose(self.hass, conversation.DOMAIN, e)}
 
     def _info(self, actions: list[dict]) -> dict[str, logic.EntityInfo]:
+        """Stan z HA + polska nazwa z serwera (gdy jest), inaczej nazwa encji z HA."""
+        names = logic.entity_names(self._devices or [])
         info = {}
         for e in {e for a in actions for e in a.get("entity_id") or []}:
             if (s := self.hass.states.get(e)) is not None:
-                info[e] = logic.EntityInfo(name=s.name, state=s.state, unit=s.attributes.get("unit_of_measurement"),
-                                           device_class=s.attributes.get("device_class"))
+                d = names.get(e)
+                info[e] = logic.EntityInfo(name=d.nom if d else s.name, state=s.state,
+                                           unit=s.attributes.get("unit_of_measurement"),
+                                           device_class=s.attributes.get("device_class"), acc=d.acc if d else None)
         return info
 
     async def _execute(self, actions: list[dict], user_input: conversation.ConversationInput) -> str:
@@ -140,13 +161,13 @@ class DomGemmaAgent(conversation.ConversationEntity):
             try:
                 await self.hass.services.async_call(domain, service, data, blocking=True, context=user_input.context)
             except Unauthorized:
-                sentences.append(f"Nie masz uprawnień do {logic._names(a['entity_id'], self._info([a]))}")
+                sentences.append(f"Nie masz uprawnień do sterowania: {logic._names(a['entity_id'], self._info([a]), self._devices, 'nom')}")
                 continue
             except HomeAssistantError as err:
                 _LOGGER.warning("Błąd %s: %s", a["service"], err)
-                sentences.append(f"Nie udało się: {logic._names(a['entity_id'], self._info([a]))}")
+                sentences.append(f"Nie udało się: {logic._names(a['entity_id'], self._info([a]), self._devices, 'nom')}")
                 continue
-            sentences.append(logic.action_sentence(a, self._info([a])))
+            sentences.append(logic.action_sentence(a, self._info([a]), self._devices))
         return ". ".join(sentences) + "."
 
     def _reply(self, user_input, chat_log, response, speech: str, keep_listening: bool = False):

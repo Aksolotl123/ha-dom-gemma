@@ -64,6 +64,21 @@ def test_sentences():
     assert logic.state_sentence("sensor.temp", INFO) == "Temperatura w salonie: 21,5 °C"
     assert logic.state_sentence("binary_sensor.drzwi", INFO) == "Drzwi do sypialni: zamknięte"
     assert logic.state_sentence("lock.zamek", INFO) == "Drzwi wejściowe: zamknięte"
+    # nazwy z serwera: całe urządzenie (L1+L2) ma pierwszeństwo, biernik w akcjach, mianownik przy błędach
+    devs = logic.names_from_server({
+        "swiatlo_kuchni": {"ids": ["switch.kuchnia_l1", "switch.kuchnia_l2"], "name": "światło w kuchni", "acc": "światło w kuchni"},
+        "kuchnia_2": {"ids": ["switch.kuchnia_l1"], "name": "kuchnia 2", "acc": "kuchnię 2"},
+        "lampka": {"ids": ["light.lampka"], "name": "lampka przy biurku", "acc": "lampkę przy biurku"},
+    })
+    assert logic.action_sentence(off, INFO, devs) == "Wyłączam światło w kuchni"
+    part = {"action": "call_service", "service": "switch.turn_on", "entity_id": ["switch.kuchnia_l1"]}
+    assert logic.action_sentence(part, INFO, devs) == "Włączam kuchnię 2"
+    assert logic.action_sentence(dim, INFO, devs) == "Ustawiam lampkę przy biurku na 30%"
+    assert logic.entity_names(devs)["switch.kuchnia_l1"].nom == "kuchnia 2"
+    assert logic.names_from_server({"x": "zły wpis"}) == []
+    # niedostępny czujnik z jednostką: bez „unavailable °C” (znalezione w teście na żywym HA)
+    down = {"sensor.x": logic.EntityInfo("temperatura w salonie", "unavailable", unit="°C")}
+    assert logic.state_sentence("sensor.x", down) == "temperatura w salonie: niedostępne"
     unlock = {"action": "call_service", "service": "lock.unlock", "entity_id": ["lock.zamek"]}
     assert logic.confirmation_question([unlock], INFO) == "Czy na pewno otworzyć Drzwi wejściowe? Powiedz tak albo nie."
     script = {"action": "call_service", "service": "script.turn_on", "entity_id": ["script.zamknij_i_zgas_wszystko"]}
