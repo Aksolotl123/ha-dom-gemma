@@ -14,6 +14,8 @@ domu) działającego na telefonie w sieci domowej. Model zwraca akcje, a integra
   i miejsca z pytania, a „włącz”/„zgaś” z pierwszego polecenia,
 - włącza żarówki zasilane przez sterowany przełącznik: po włączeniu przełącznika czeka (do 20 s), aż żarówka się
   zgłosi, i włącza ją, jeśli wstała zgaszona (pole `bulbs` w liście urządzeń serwera),
+- ustawia jasność takich świateł: włącza przełącznik, po chwili wysyła jasność do żarówek i ponawia, dopóki nowy
+  stan żarówki jej nie potwierdzi; jasność na przełączniku bez żarówek (gniazdko) jest odrzucana,
 - gdy serwer nie odpowiada, przekazuje zdanie wbudowanemu agentowi HA (opcja); czujnik „Serwer” (łączność,
   sprawdzany co 30 s) pokazuje, czy serwer działa — można na nim oprzeć powiadomienie.
 

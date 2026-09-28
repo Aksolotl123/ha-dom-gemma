@@ -13,3 +13,4 @@ DEVICES_TTL = 600     # s; co tyle odświeżamy listę urządzeń z serwera (now
 BULB_WAIT = 20        # s; tyle czekamy, aż żarówka za włączonym przełącznikiem się zgłosi (zwykle ~3 s)
 HEALTH_TIMEOUT = 5    # s; czujnik łączności (/health co 30 s)
 BULB_STEP = 1        # s; odstęp między sprawdzeniami stanu żarówek
+BULB_SETTLE = 5      # s; przerwa po włączeniu zasilania przed ustawieniem jasności (żarówki zgłaszają się po 2-4 s)

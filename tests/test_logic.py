@@ -142,3 +142,44 @@ def test_bulbs_for_and_turn_on_decision():
     assert logic.bulbs_to_turn_on({"light.a": "off", "light.b": "unknown"}) == (["light.a"], False)
     assert logic.bulbs_to_turn_on({"light.a": "on", "light.x": None}) == ([], True)            # brak encji = pomiń
     assert logic.bulbs_to_turn_on({}) == ([], True)
+
+
+# ----------------------------------------------------------------------------- jasność świateł za przełącznikiem
+def test_dim_gate_only_for_relays_with_bulbs():
+    devs = logic.names_from_server({
+        "swiatlo": {"ids": ["switch.rel"], "name": "światło", "kind": "light", "bulbs": ["light.b"]},
+        "gniazdko": {"ids": ["switch.plug"], "name": "gniazdko", "kind": "plug"},
+    })
+    dimmable = logic.dimmable_relays(devs)
+    assert dimmable == {"switch.rel"}
+    known = {"switch.rel", "switch.plug"}
+    dim = lambda e: [{"action": "call_service", "service": "switch.turn_on", "entity_id": [e], "data": {"brightness_pct": 30}}]
+    assert logic.check_actions(dim("switch.rel"), known, None, dimmable) == []
+    assert logic.check_actions(dim("switch.plug"), known, None, dimmable)            # gniazdko: odrzucone
+    assert logic.check_actions(dim("switch.rel"), known, None)                        # brak listy urządzeń: odrzucone
+    assert logic.dimmable_relays(None) == frozenset()
+    plain = [{"action": "call_service", "service": "switch.turn_on", "entity_id": ["switch.plug"]}]
+    assert logic.check_actions(plain, known, None, dimmable) == []                   # zwykłe włączenie bez zmian
+    assert logic.action_sentence(dim("switch.rel")[0], {}, devs) == "Ustawiam światło na 30%"
+
+
+def test_bulbs_dim_plan():
+    want = round(30 * 255 / 100)
+    # przed wysłaniem: wysyłamy do dostępnych (także pokazujących stary „off”), czekamy na niedostępne
+    todo, done = logic.bulbs_dim_plan({"a": ("off", None, 100.0), "b": ("unavailable", None, 100.0),
+                                       "c": (None, None, 0.0)}, {}, 30, now=200.0)
+    assert todo == ["a"] and not done
+    # stan sprzed polecenia to nie potwierdzenie; zbyt wcześnie na ponowienie
+    todo, done = logic.bulbs_dim_plan({"a": ("on", 255, 150.0)}, {"a": (200.0, 1)}, 30, now=201.0)
+    assert todo == [] and not done
+    # nowszy stan z inną jasnością (np. 100% po starcie) -> ponowienie po czasie
+    todo, done = logic.bulbs_dim_plan({"a": ("on", 255, 202.0)}, {"a": (200.0, 1)}, 30, now=204.0)
+    assert todo == ["a"] and not done
+    # nowszy stan z zadaną jasnością -> koniec
+    assert logic.bulbs_dim_plan({"a": ("on", want + 2, 202.0)}, {"a": (200.0, 1)}, 30, now=204.0) == ([], True)
+    # próby wyczerpane -> koniec (bez nieskończonego ponawiania)
+    assert logic.bulbs_dim_plan({"a": ("on", 255, 202.0)}, {"a": (200.0, 3)}, 30, now=210.0) == ([], True)
+    # krok ±N: jedna próba (ponowienie zsumowałoby kroki), potwierdza nowszy stan „on”
+    assert logic.bulbs_dim_plan({"a": ("on", 100, 199.0)}, {"a": (200.0, 1)}, None, now=210.0) == ([], True)
+    assert logic.bulbs_dim_plan({"a": ("on", 100, 202.0)}, {"a": (200.0, 1)}, None, now=203.0) == ([], True)
+    assert logic.bulbs_dim_plan({}, {}, 30, now=0.0) == ([], True)

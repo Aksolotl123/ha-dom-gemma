@@ -19,6 +19,8 @@ ALLOWED_SERVICES: dict[str, set[str]] = {
 }
 ALLOWED_DATA: dict[str, set[str]] = {
     "light.turn_on": {"brightness_pct", "brightness_step_pct"},
+    # jasność na przełączniku = światło za przekaźnikiem; check_actions przepuszcza ją tylko dla przełączników z żarówkami
+    "switch.turn_on": {"brightness_pct", "brightness_step_pct"},
     "media_player.volume_mute": {"is_volume_muted"},
 }
 
@@ -114,8 +116,44 @@ def bulbs_to_turn_on(states: dict[str, str | None]) -> tuple[list[str], bool]:
     return off, not off and not waiting
 
 
-def check_actions(actions: list[dict], known_entities: set[str], exposed: set[str] | None) -> list[str]:
-    """Walidacja po stronie HA. exposed=None -> nie wymagamy wystawienia do Assist."""
+def dimmable_relays(devices: list[DeviceName] | None) -> frozenset[str]:
+    """Przełączniki, za którymi stoją żarówki - tylko na nich jasność ma sens (i jest dozwolona)."""
+    return frozenset(e for d in devices or [] if d.bulbs for e in d.ids)
+
+
+def bulbs_dim_plan(info: dict[str, tuple[str | None, int | None, float]], sent: dict[str, tuple[float, int]],
+                   target_pct: int | None, now: float, retry_after: float = 3.0,
+                   max_tries: int = 3) -> tuple[list[str], bool]:
+    """Ustawianie jasności żarówek za przełącznikiem -> (do wysłania teraz, czy koniec).
+
+    info: żarówka -> (stan, jasność 0-255, czas ostatniej zmiany stanu); sent: żarówka -> (czas wysłania, próby).
+    Żarówka jest załatwiona dopiero, gdy stan NOWSZY niż polecenie jest „on” z zadaną jasnością: Lidl po krótkim
+    zaniku prądu potrafi nie raportować (HA pokazuje stary „off”), a Z2M nie zgłasza błędu, gdy polecenie przepadnie.
+    target_pct=None (krok ±N) - wystarczy nowszy stan „on”; ponawianie kroku by go zsumowało, więc tylko 1 próba."""
+    tries = max_tries if target_pct is not None else 1
+    want = round(target_pct * 255 / 100) if target_pct is not None else None
+    todo, pending = [], False
+    for bulb, (state, brightness, updated) in sorted(info.items()):
+        if state is None:
+            continue  # brak encji w HA
+        last = sent.get(bulb)
+        if last and updated > last[0] and state == "on" and (
+                want is None or (brightness is not None and abs(brightness - want) <= 8)):
+            continue  # potwierdzona
+        if last and last[1] >= tries:
+            continue  # próby wyczerpane - poddajemy się dla tej żarówki
+        pending = True
+        if state in ("unavailable", "unknown"):
+            continue  # jeszcze bez zasilania / się nie zgłosiła
+        if last is None or now - last[0] >= retry_after:
+            todo.append(bulb)
+    return todo, not pending
+
+
+def check_actions(actions: list[dict], known_entities: set[str], exposed: set[str] | None,
+                  dimmable: frozenset[str] = frozenset()) -> list[str]:
+    """Walidacja po stronie HA. exposed=None -> nie wymagamy wystawienia do Assist.
+    dimmable: przełączniki z żarówkami (jasność na innych przełącznikach = błąd; pusty zbiór = żadnych)."""
     if not isinstance(actions, list) or not actions:
         return ["brak akcji"]
     errors = []
@@ -144,6 +182,9 @@ def check_actions(actions: list[dict], known_entities: set[str], exposed: set[st
             errors.append(f"encje z innej domeny niż {domain}")
         if set(a.get("data") or {}) - ALLOWED_DATA.get(service, set()):
             errors.append(f"niedozwolone dane dla {service}")
+        # jasność na przełączniku bez żarówek (gniazdko, zmywarka, płyta) włączyłaby zasilanie urządzenia
+        if service == "switch.turn_on" and a.get("data") and not set(ids) <= dimmable:
+            errors.append(f"jasność tylko dla świateł z żarówkami: {sorted(set(ids) - dimmable)}")
     return errors
 
 
