@@ -27,7 +27,8 @@ w konfiguracji.
 1. HACS → Integracje → ⋮ → Własne repozytoria → dodaj adres tego repozytorium (kategoria: Integracja).
 2. Zainstaluj „Dom Gemma” i uruchom ponownie Home Assistant.
 3. Ustawienia → Urządzenia i usługi → Dodaj integrację → „Dom Gemma”: adres serwera (np. `http://<ip-telefonu>:8765`)
-   i token z pliku `config.json` serwera.
+   i token z pliku `config.json` serwera. Kilka adresów rozdziel przecinkiem (np. telefon, który bywa w dwóch sieciach Wi-Fi):
+   integracja pyta najpierw ten, który ostatnio odpowiedział, a gdy nie odpowie w 3 s - następny.
 4. Ustawienia → Asystenci głosowi → wybierz asystenta → Agent rozmowy: **Dom Gemma**.
 
 ## Opcje

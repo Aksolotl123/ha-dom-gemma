@@ -2,20 +2,17 @@
 agentowi HA (opcja) - ten czujnik pozwala to zauważyć i ustawić powiadomienie."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import timedelta
-
-import aiohttp
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_URL, DOMAIN, HEALTH_TIMEOUT
+from .const import DOMAIN, HEALTH_TIMEOUT
+from .link import ServerLink, ServerUnavailable
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,16 +40,18 @@ class ServerConnectivity(BinarySensorEntity):
         self._attr_extra_state_attributes = {}
 
     async def async_update(self) -> None:
-        # /health jest bez tokenu; błąd sieci to stan „off”, a nie „niedostępny” - o to właśnie chodzi w czujniku
+        # /health jest bez tokenu; błąd sieci to stan „off”, a nie „niedostępny” - o to właśnie chodzi w czujniku.
+        # Przy kilku adresach sprawdzamy kolejno (ostatnio działający najpierw) - wspólny ServerLink z agentem.
+        link: ServerLink = self.entry.runtime_data
         try:
-            async with asyncio.timeout(HEALTH_TIMEOUT):
-                async with async_get_clientsession(self.hass).get(f"{self.entry.data[CONF_URL]}/health") as r:
-                    body = await r.json() if r.status == 200 else {}
-        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            status, body = await link.request("GET", "/health", HEALTH_TIMEOUT, auth=False)
+        except ServerUnavailable as err:
             if self._attr_is_on:
-                _LOGGER.warning("DomGemma Server przestał odpowiadać: %s", type(err).__name__)
+                _LOGGER.warning("DomGemma Server przestał odpowiadać: %s", err)
             self._attr_is_on = False
-            self._attr_extra_state_attributes = {"status": type(err).__name__}
+            self._attr_extra_state_attributes = {"status": "brak odpowiedzi", "adresy": link.urls}
             return
-        self._attr_is_on = body.get("ready") is True
-        self._attr_extra_state_attributes = {"status": body.get("status"), "format_version": body.get("format_version")}
+        body = body if isinstance(body, dict) else {}
+        self._attr_is_on = status == 200 and body.get("ready") is True
+        self._attr_extra_state_attributes = {"status": body.get("status"), "format_version": body.get("format_version"),
+                                             "adres": link.good}

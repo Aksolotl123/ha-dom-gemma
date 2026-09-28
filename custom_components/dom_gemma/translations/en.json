@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Dom Gemma",
-        "description": "Adres serwera DomGemma w sieci domowej (np. http://<ip-telefonu>:8765) i jego token z files/config.json.",
+        "description": "DomGemma Server address in your LAN (e.g. http://<phone-ip>:8765) and its token from files/config.json. Separate several addresses with commas - the one that answers is used.",
         "data": {
           "url": "Adres serwera",
           "token": "Token API"
@@ -11,7 +11,7 @@
       },
       "reconfigure": {
         "title": "Dom Gemma",
-        "description": "New server address (e.g. after the phone's IP changed). Leave the token empty to keep it.",
+        "description": "New server address(es), comma-separated. Leave the token empty to keep it.",
         "data": {
           "url": "Server URL",
           "token": "API token"

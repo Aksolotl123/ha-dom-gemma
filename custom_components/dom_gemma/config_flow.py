@@ -1,21 +1,21 @@
-"""Konfiguracja: adres serwera i token. Bez wartości domyślnych - nic z domu nie trafia do kodu."""
+"""Konfiguracja: adres(y) serwera i token. Bez wartości domyślnych - nic z domu nie trafia do kodu.
+Kilka adresów po przecinku (np. telefon w dwóch sieciach Wi-Fi) - działa ten, który odpowie."""
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
-import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
+from . import logic
 from .const import CONF_FALLBACK, CONF_REQUIRE_EXPOSED, CONF_TOKEN, CONF_URL, DOMAIN
+from .link import ServerLink, ServerUnavailable
 
 USER_SCHEMA = vol.Schema({
-    vol.Required(CONF_URL): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
+    vol.Required(CONF_URL): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
     vol.Required(CONF_TOKEN): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
 })
 
@@ -26,7 +26,7 @@ class DomGemmaConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            url = user_input[CONF_URL].rstrip("/")
+            url = ", ".join(logic.parse_urls(user_input[CONF_URL]))
             self._async_abort_entries_match({CONF_URL: url})
             errors = await _check(self.hass, url, user_input[CONF_TOKEN])
             if not errors:
@@ -38,13 +38,13 @@ class DomGemmaConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
         if user_input is not None:
-            url = user_input[CONF_URL].rstrip("/")
+            url = ", ".join(logic.parse_urls(user_input[CONF_URL]))
             token = user_input.get(CONF_TOKEN) or entry.data[CONF_TOKEN]
             errors = await _check(self.hass, url, token)
             if not errors:
                 return self.async_update_reload_and_abort(entry, data_updates={CONF_URL: url, CONF_TOKEN: token})
         return self.async_show_form(step_id="reconfigure", errors=errors, data_schema=vol.Schema({
-            vol.Required(CONF_URL, default=entry.data[CONF_URL]): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
+            vol.Required(CONF_URL, default=entry.data[CONF_URL]): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
             vol.Optional(CONF_TOKEN): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
         }))
 
@@ -65,19 +65,18 @@ class DomGemmaOptionsFlow(OptionsFlow):
         }))
 
 
-async def _check(hass, url: str, token: str) -> dict[str, str]:
-    """Sprawdza adres (/health) i token (/v1/devices)."""
-    session = async_get_clientsession(hass)
-    try:
-        async with asyncio.timeout(10):
-            async with session.get(f"{url}/health") as r:
-                if r.status != 200:
-                    return {"base": "cannot_connect"}
-            async with session.get(f"{url}/v1/devices", headers={"Authorization": f"Bearer {token}"}) as r:
-                if r.status == 401:
-                    return {"base": "invalid_auth"}
-                if r.status != 200:
-                    return {"base": "cannot_connect"}
-    except (aiohttp.ClientError, TimeoutError):
+async def _check(hass, urls: str, token: str) -> dict[str, str]:
+    """Wystarczy, że odpowie jeden z adresów (/health); token sprawdzany na nim (/v1/devices)."""
+    if not logic.parse_urls(urls):
         return {"base": "cannot_connect"}
-    return {}
+    link = ServerLink(hass, urls, token)
+    try:
+        status, _ = await link.request("GET", "/health", 10, auth=False)
+        if status != 200:
+            return {"base": "cannot_connect"}
+        status, _ = await link.request("GET", "/v1/devices", 10)
+    except ServerUnavailable:
+        return {"base": "cannot_connect"}
+    if status == 401:
+        return {"base": "invalid_auth"}
+    return {} if status == 200 else {"base": "cannot_connect"}

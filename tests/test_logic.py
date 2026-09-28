@@ -183,3 +183,14 @@ def test_bulbs_dim_plan():
     assert logic.bulbs_dim_plan({"a": ("on", 100, 199.0)}, {"a": (200.0, 1)}, None, now=210.0) == ([], True)
     assert logic.bulbs_dim_plan({"a": ("on", 100, 202.0)}, {"a": (200.0, 1)}, None, now=203.0) == ([], True)
     assert logic.bulbs_dim_plan({}, {}, 30, now=0.0) == ([], True)
+
+
+# ----------------------------------------------------------------------------- kilka adresów serwera
+def test_parse_and_order_urls():
+    assert logic.parse_urls("http://a:8765, http://b:8765/ ;http://a:8765") == ["http://a:8765", "http://b:8765"]
+    assert logic.parse_urls("") == [] and logic.parse_urls(None) == []
+    assert logic.parse_urls("http://a:8765") == ["http://a:8765"]
+    urls = ["http://a:8765", "http://b:8765"]
+    assert logic.order_urls(urls, None) == urls
+    assert logic.order_urls(urls, "http://b:8765") == ["http://b:8765", "http://a:8765"]   # ostatnio działający najpierw
+    assert logic.order_urls(urls, "http://inny:1") == urls                                 # nieznany - kolejność z konfiguracji

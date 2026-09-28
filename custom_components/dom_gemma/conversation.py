@@ -6,20 +6,18 @@ import logging
 import time
 from typing import Literal
 
-import aiohttp
-
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, Unauthorized
 from homeassistant.helpers import intent
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import logic
-from .const import (BULB_SETTLE, BULB_STEP, BULB_WAIT, CLARIFY_TTL, CONF_FALLBACK, CONF_REQUIRE_EXPOSED, CONF_TOKEN, CONF_URL,
+from .const import (BULB_SETTLE, BULB_STEP, BULB_WAIT, CLARIFY_TTL, CONF_FALLBACK, CONF_REQUIRE_EXPOSED,
                     CONFIRM_TTL, DEFAULT_TIMEOUT, DEVICES_TTL, DOMAIN)
+from .link import ServerLink, ServerUnavailable
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,10 +25,6 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
                             async_add_entities: AddConfigEntryEntitiesCallback) -> None:
     async_add_entities([DomGemmaAgent(entry)])
-
-
-class ServerUnavailable(Exception):
-    """Serwer nie odpowiedział - przekazujemy zdanie do wbudowanego agenta HA."""
 
 
 class DomGemmaAgent(conversation.ConversationEntity):
@@ -130,29 +124,23 @@ class DomGemmaAgent(conversation.ConversationEntity):
         return self._reply(user_input, chat_log, response, speech)
 
     # ------------------------------------------------------------------ pomocnicze
+    @property
+    def _link(self) -> ServerLink:
+        return self.entry.runtime_data
+
     async def _ask_server(self, text: str) -> dict:
-        url = self.entry.data[CONF_URL]
-        headers = {"Authorization": f"Bearer {self.entry.data[CONF_TOKEN]}"}
-        try:
-            async with asyncio.timeout(DEFAULT_TIMEOUT):
-                async with async_get_clientsession(self.hass).post(
-                        f"{url}/v1/command", json={"text": text}, headers=headers) as r:
-                    if r.status != 200:
-                        raise ServerUnavailable(f"HTTP {r.status}")
-                    return await r.json()
-        except (aiohttp.ClientError, TimeoutError) as err:
-            raise ServerUnavailable(type(err).__name__) from err
+        status, data = await self._link.request("POST", "/v1/command", DEFAULT_TIMEOUT, body={"text": text})
+        if status != 200 or not isinstance(data, dict):
+            raise ServerUnavailable(f"HTTP {status}")
+        return data
 
     async def _fetch_names(self) -> list[logic.DeviceName] | None:
         """Nazwy z /v1/devices. Błąd nie blokuje polecenia - wtedy zostają nazwy encji z HA (spróbujemy ponownie)."""
         try:
-            async with asyncio.timeout(5):
-                async with async_get_clientsession(self.hass).get(
-                        f"{self.entry.data[CONF_URL]}/v1/devices",
-                        headers={"Authorization": f"Bearer {self.entry.data[CONF_TOKEN]}"}) as r:
-                    if r.status == 200:
-                        return logic.names_from_server(await r.json())
-        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            status, data = await self._link.request("GET", "/v1/devices", 5)
+            if status == 200 and isinstance(data, dict):
+                return logic.names_from_server(data)
+        except ServerUnavailable as err:
             _LOGGER.debug("Nie pobrano nazw urządzeń: %s", err)
         return None
 

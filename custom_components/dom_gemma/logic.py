@@ -116,6 +116,21 @@ def bulbs_to_turn_on(states: dict[str, str | None]) -> tuple[list[str], bool]:
     return off, not off and not waiting
 
 
+def parse_urls(text: str) -> list[str]:
+    """„http://a:8765, http://b:8765/” -> ['http://a:8765', 'http://b:8765'] (przecinki/średniki/spacje, bez duplikatów)."""
+    out: list[str] = []
+    for part in re.split(r"[,;\s]+", text or ""):
+        url = part.strip().rstrip("/")
+        if url and url not in out:
+            out.append(url)
+    return out
+
+
+def order_urls(urls: list[str], good: str | None) -> list[str]:
+    """Ostatnio działający adres najpierw, reszta w kolejności z konfiguracji."""
+    return ([good] if good in urls else []) + [u for u in urls if u != good]
+
+
 def dimmable_relays(devices: list[DeviceName] | None) -> frozenset[str]:
     """Przełączniki, za którymi stoją żarówki - tylko na nich jasność ma sens (i jest dozwolona)."""
     return frozenset(e for d in devices or [] if d.bulbs for e in d.ids)
