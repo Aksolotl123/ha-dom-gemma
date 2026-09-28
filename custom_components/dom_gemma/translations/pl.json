@@ -1,0 +1,26 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Dom Gemma",
+        "description": "Adres serwera DomGemma w sieci domowej (np. http://<ip-telefonu>:8765) i jego token z files/config.json.",
+        "data": {"url": "Adres serwera", "token": "Token API"}
+      }
+    },
+    "error": {
+      "cannot_connect": "Nie można połączyć się z serwerem.",
+      "invalid_auth": "Zły token."
+    },
+    "abort": {"already_configured": "Ten serwer jest już skonfigurowany."}
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "require_exposed": "Wykonuj tylko na encjach wystawionych do Assist",
+          "fallback_to_default": "Gdy serwer nie odpowiada, przekaż zdanie wbudowanemu agentowi HA"
+        }
+      }
+    }
+  }
+}

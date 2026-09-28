@@ -1,0 +1,14 @@
+{
+  "domain": "dom_gemma",
+  "name": "Dom Gemma",
+  "version": "0.1.0",
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "after_dependencies": ["assist_pipeline", "intent"],
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "codeowners": ["@Aksolotl123"],
+  "documentation": "https://github.com/Aksolotl123/ha-dom-gemma",
+  "issue_tracker": "https://github.com/Aksolotl123/ha-dom-gemma/issues"
+}
