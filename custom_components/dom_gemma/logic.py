@@ -42,6 +42,78 @@ def answer_kind(text: str) -> str:
     return "other"
 
 
+# ----------------------------------------------------------------------------- odpowiedź na dopytanie
+# Model nie był uczony rozmów wieloturowych: samo „Nad stołem.” włącza (domyślny kierunek), a sklejone
+# „Zgaś światło w salonie. Nad stołem.” myli urządzenie. Sprawdzone na serwerze (28.09): urządzenie trafnie
+# wskazuje odpowiedź z dopisanym miejscem z pytania („Nad stołem w salonie.”), a kierunek bierzemy z polecenia.
+
+_OFF_WORDS = ("zgas", "wylacz", "pogas", "gas")
+_ON_WORDS = ("wlacz", "zapal", "pozapal")
+_COMMAND_WORDS = _OFF_WORDS + _ON_WORDS + ("otworz", "zamknij", "ustaw", "przyciem", "rozjasn", "podglos", "scisz",
+                                           "wycisz", "uruchom", "jaka", "jaki", "jakie", "czy", "ile", "sprawdz")
+_QUESTION_LOC = re.compile(r"^Które światło (.+)\?$")
+
+
+def power_direction(text: str) -> str | None:
+    """'turn_on' / 'turn_off' z czasownika polecenia; None gdy brak albo oba (wtedy decyduje model)."""
+    words = _plain(text).split()
+    off = any(w.startswith(_OFF_WORDS) for w in words)
+    on = any(w.startswith(_ON_WORDS) for w in words)
+    return "turn_off" if off and not on else "turn_on" if on and not off else None
+
+
+def is_new_command(answer: str) -> bool:
+    """Odpowiedź zaczyna się czasownikiem polecenia („zgaś światło w kuchni”) - nowe polecenie, nie doprecyzowanie."""
+    words = _plain(answer).split()
+    return bool(words) and words[0].startswith(_COMMAND_WORDS)
+
+
+def followup_text(question: str, answer: str) -> str:
+    """Tekst dla modelu: odpowiedź + miejsce z pytania „Które światło w salonie?” (jeśli go w odpowiedzi nie ma)."""
+    ans = answer.strip().rstrip(".!?").strip()
+    m = _QUESTION_LOC.match(question.strip())
+    if m and _plain(m.group(1)) not in _plain(ans):
+        return f"{ans} {m.group(1)}."
+    return f"{ans}."
+
+
+def with_direction(actions: list[dict], direction: str, light_ids: set[str]) -> list[dict] | None:
+    """Te same urządzenia z kierunkiem z polecenia. Tylko wł/wył świateł - inne akcje (i np. płyta indukcyjna,
+    która wymaga potwierdzenia przy włączaniu) zostają bez zmian (None)."""
+    for a in actions:
+        domain, _, name = str(a.get("service", "")).partition(".")
+        if (a.get("action") != "call_service" or name not in ("turn_on", "turn_off") or a.get("data")
+                or not a.get("entity_id") or not set(a["entity_id"]) <= light_ids):
+            return None
+    return [{**a, "service": f"{a['service'].partition('.')[0]}.{direction}"} for a in actions]
+
+
+def actions_direction(actions: list[dict]) -> str | None:
+    """Wspólny kierunek wł/wył akcji (bez danych); None gdy mieszany albo to nie są wł/wył."""
+    if not actions or any(a.get("action") != "call_service" or a.get("data") for a in actions):
+        return None
+    names = {str(a.get("service", "")).partition(".")[2] for a in actions}
+    return names.pop() if len(names) == 1 and names <= {"turn_on", "turn_off"} else None
+
+
+# ----------------------------------------------------------------------------- żarówki za przekaźnikami
+# Żarówki Zigbee są zasilane przez sterowane przełączniki. Po włączeniu przełącznika żarówka zgłasza się po ~3 s
+# w stanie zależnym od swojego „power-on behavior” - np. przy „restore” wstaje zgaszona, jeśli była zgaszona.
+
+def bulbs_for(entity_ids: list[str], devices: list[DeviceName]) -> set[str]:
+    """Żarówki zasilane przez podane przełączniki (z najmniejszego urządzenia z pakietu, które je zawiera)."""
+    names = entity_names([d for d in devices if d.bulbs])
+    return {b for e in entity_ids if (d := names.get(e)) for b in d.bulbs}
+
+
+def bulbs_to_turn_on(states: dict[str, str | None]) -> tuple[list[str], bool]:
+    """Stany żarówek -> (zgaszone do włączenia teraz, czy wszystko załatwione).
+    None = brak encji w HA (pomijamy); unavailable/unknown = żarówka jeszcze nie ma zasilania / się nie zgłosiła."""
+    off = sorted(b for b, s in states.items() if s == "off")
+    waiting = any(s in ("unavailable", "unknown") for s in states.values())
+    return off, not off and not waiting
+
+
 def check_actions(actions: list[dict], known_entities: set[str], exposed: set[str] | None) -> list[str]:
     """Walidacja po stronie HA. exposed=None -> nie wymagamy wystawienia do Assist."""
     if not isinstance(actions, list) or not actions:
@@ -98,14 +170,19 @@ class DeviceName:
     ids: frozenset[str]
     nom: str
     acc: str
+    kind: str = ""
+    bulbs: frozenset[str] = frozenset()  # żarówki (light.*) zasilane przez te przełączniki
 
 
 def names_from_server(devices: dict) -> list[DeviceName]:
-    """/v1/devices serwera: {uchwyt: {"ids", "name", "acc", ...}} -> lista nazw urządzeń."""
+    """/v1/devices serwera: {uchwyt: {"ids", "name", "acc", "kind", "bulbs"?, ...}} -> lista urządzeń."""
     out = []
     for d in devices.values():
         if isinstance(d, dict) and d.get("ids") and d.get("name"):
-            out.append(DeviceName(frozenset(d["ids"]), d["name"], d.get("acc") or d["name"]))
+            # żarówki tylko z domeny light - agent włącza je sam, bez modelu i bez listy dozwolonych usług
+            bulbs = frozenset(b for b in d.get("bulbs") or [] if isinstance(b, str) and b.startswith("light."))
+            out.append(DeviceName(frozenset(d["ids"]), d["name"], d.get("acc") or d["name"],
+                                  str(d.get("kind") or ""), bulbs))
     return out
 
 

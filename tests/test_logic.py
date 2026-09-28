@@ -85,3 +85,60 @@ def test_sentences():
     assert logic.confirmation_question([unlock], INFO) == "Czy na pewno otworzyć Drzwi wejściowe? Powiedz tak albo nie."
     script = {"action": "call_service", "service": "script.turn_on", "entity_id": ["script.zamknij_i_zgas_wszystko"]}
     assert logic.confirmation_question([script], INFO).startswith("Czy na pewno uruchomić Zamknij i zgaś wszystko")
+
+
+# ----------------------------------------------------------------------------- dopytanie
+@pytest.mark.parametrize("text,direction", [
+    ("Zgaś światło w salonie.", "turn_off"), ("wyłącz światło w salonie", "turn_off"), ("pogaś w salonie", "turn_off"),
+    ("Włącz światło w salonie.", "turn_on"), ("zapal światło", "turn_on"),
+    ("Światło w salonie", None), ("", None), ("włącz albo wyłącz", None),
+])
+def test_power_direction(text, direction):
+    assert logic.power_direction(text) == direction
+
+
+def test_followup_text_adds_place_from_question():
+    # sprawdzone na serwerze: „Nad stołem w salonie.” trafia, „Zgaś światło w salonie. Nad stołem.” myli urządzenie
+    assert logic.followup_text("Które światło w salonie?", "Nad stołem.") == "Nad stołem w salonie."
+    assert logic.followup_text("Które światło w salonie?", "lampkę w salonie") == "lampkę w salonie."
+    assert logic.followup_text("Które światło w sypialni?", " nocną! ") == "nocną w sypialni."
+    assert logic.followup_text("Które urządzenie i w którym pomieszczeniu?", "Światło w kuchni") == "Światło w kuchni."
+    assert logic.is_new_command("Zgaś światło w kuchni") and logic.is_new_command("jaka jest temperatura")
+    assert not logic.is_new_command("Nad stołem.") and not logic.is_new_command("") and not logic.is_new_command("Wszystkie")
+
+
+def test_with_direction_only_for_light_power():
+    lights = {"switch.stol", "switch.kanapa", "light.lampka"}
+    on = [{"action": "call_service", "service": "switch.turn_on", "entity_id": ["switch.stol"]}]
+    assert logic.with_direction(on, "turn_off", lights) == [
+        {"action": "call_service", "service": "switch.turn_off", "entity_id": ["switch.stol"]}]
+    assert on[0]["service"] == "switch.turn_on"   # bez zmiany wejścia
+    plyta = [{"action": "call_service", "service": "switch.turn_off", "entity_id": ["switch.plyta"]}]
+    assert logic.with_direction(plyta, "turn_on", lights) is None     # nie-światło: bez obejścia potwierdzenia
+    dim = [{"action": "call_service", "service": "light.turn_on", "entity_id": ["light.lampka"], "data": {"brightness_pct": 5}}]
+    assert logic.with_direction(dim, "turn_off", lights) is None
+    assert logic.with_direction([{"action": "clarify", "question": "?"}], "turn_on", lights) is None
+    assert logic.actions_direction(on + [{**on[0], "entity_id": ["switch.kanapa"]}]) == "turn_on"
+    assert logic.actions_direction(on + plyta) is None
+    assert logic.actions_direction(dim) is None and logic.actions_direction([]) is None
+
+
+# ----------------------------------------------------------------------------- żarówki za przekaźnikami
+def test_bulbs_for_and_turn_on_decision():
+    devs = logic.names_from_server({
+        "swiatlo_kuchni": {"ids": ["switch.k1", "switch.k2"], "name": "światło w kuchni", "kind": "light",
+                           "bulbs": ["light.b1", "light.b2", "light.b3", "light.b4"]},
+        "kuchnia_1": {"ids": ["switch.k2"], "name": "kuchnia 1", "kind": "light", "bulbs": ["light.b1", "light.b2"]},
+        "poleczki": {"ids": ["switch.p1", "switch.p2"], "name": "półeczki", "kind": "light", "bulbs": ["light.p"]},
+        "zly": {"ids": ["switch.z"], "name": "zły", "bulbs": ["switch.cos", 7, "light.ok"]},
+        "zmywarka": {"ids": ["switch.zm"], "name": "zmywarka", "kind": "plug"},
+    })
+    assert logic.bulbs_for(["switch.k2"], devs) == {"light.b1", "light.b2"}          # część: tylko jej żarówki
+    assert logic.bulbs_for(["switch.k1", "switch.k2"], devs) == {"light.b1", "light.b2", "light.b3", "light.b4"}
+    assert logic.bulbs_for(["switch.p1"], devs) == {"light.p"}                     # kanał bez własnego wpisu
+    assert logic.bulbs_for(["switch.z"], devs) == {"light.ok"}                     # tylko light.*
+    assert logic.bulbs_for(["switch.zm"], devs) == set() and logic.bulbs_for([], devs) == set()
+    assert logic.bulbs_to_turn_on({"light.a": "unavailable", "light.b": "on"}) == ([], False)   # czekamy
+    assert logic.bulbs_to_turn_on({"light.a": "off", "light.b": "unknown"}) == (["light.a"], False)
+    assert logic.bulbs_to_turn_on({"light.a": "on", "light.x": None}) == ([], True)            # brak encji = pomiń
+    assert logic.bulbs_to_turn_on({}) == ([], True)

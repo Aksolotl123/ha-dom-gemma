@@ -10,6 +10,10 @@ domu) działającego na telefonie w sieci domowej. Model zwraca akcje, a integra
 - odpowiada na pytania o stan („W salonie: 21,5 °C”) bez drugiego wywołania modelu,
 - pyta o potwierdzenie przed akcjami wskazanymi przez serwer (np. otwarcie zamka) — „tak” / „nie” w tej samej
   rozmowie, ważne 60 s,
+- rozumie odpowiedź na dopytanie („Które światło w salonie?” → „Nad stołem”): urządzenie bierze z odpowiedzi
+  i miejsca z pytania, a „włącz”/„zgaś” z pierwszego polecenia,
+- włącza żarówki zasilane przez sterowany przełącznik: po włączeniu przełącznika czeka (do 20 s), aż żarówka się
+  zgłosi, i włącza ją, jeśli wstała zgaszona (pole `bulbs` w liście urządzeń serwera),
 - gdy serwer nie odpowiada, przekazuje zdanie wbudowanemu agentowi HA (opcja).
 
 Integracja nie zawiera żadnych danych domu: lista urządzeń i model są na serwerze, a adres i token podaje się
