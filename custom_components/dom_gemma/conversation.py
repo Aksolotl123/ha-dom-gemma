@@ -168,9 +168,10 @@ class DomGemmaAgent(conversation.ConversationEntity):
                 sentences.append(f"Nie udało się: {logic._names(a['entity_id'], self._info([a]), self._devices, 'nom')}")
                 continue
             sentences.append(logic.action_sentence(a, self._info([a]), self._devices))
-        return ". ".join(sentences) + "."
+        return ". ".join(logic.cap(s) for s in sentences) + "."
 
     def _reply(self, user_input, chat_log, response, speech: str, keep_listening: bool = False):
+        speech = logic.cap(speech)
         response.async_set_speech(speech)
         return self._finish(user_input, chat_log, response, speech, keep_listening)
 

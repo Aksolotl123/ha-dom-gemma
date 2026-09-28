@@ -162,6 +162,11 @@ def confirmation_question(actions: list[dict], info: dict[str, EntityInfo],
     return f"Czy na pewno {' i '.join(parts)}? Powiedz tak albo nie."
 
 
+def cap(sentence: str) -> str:
+    """Wielka litera na początku zdania (nazwy z devices.yaml są małą literą: „temperatura w salonie”)."""
+    return sentence[:1].upper() + sentence[1:]
+
+
 def _number(value: str) -> str:
     try:
         f = float(value)

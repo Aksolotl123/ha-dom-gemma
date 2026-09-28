@@ -76,6 +76,8 @@ def test_sentences():
     assert logic.action_sentence(dim, INFO, devs) == "Ustawiam lampkę przy biurku na 30%"
     assert logic.entity_names(devs)["switch.kuchnia_l1"].nom == "kuchnia 2"
     assert logic.names_from_server({"x": "zły wpis"}) == []
+    assert logic.cap("temperatura w salonie: 21 °C") == "Temperatura w salonie: 21 °C"
+    assert logic.cap("") == ""
     # niedostępny czujnik z jednostką: bez „unavailable °C” (znalezione w teście na żywym HA)
     down = {"sensor.x": logic.EntityInfo("temperatura w salonie", "unavailable", unit="°C")}
     assert logic.state_sentence("sensor.x", down) == "temperatura w salonie: niedostępne"
