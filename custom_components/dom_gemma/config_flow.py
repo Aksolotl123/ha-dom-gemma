@@ -33,6 +33,21 @@ class DomGemmaConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(title="Dom Gemma", data={CONF_URL: url, CONF_TOKEN: user_input[CONF_TOKEN]})
         return self.async_show_form(step_id="user", data_schema=USER_SCHEMA, errors=errors)
 
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Zmiana adresu (np. telefon dostał nowe IP) bez usuwania integracji; pusty token = bez zmiany."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            url = user_input[CONF_URL].rstrip("/")
+            token = user_input.get(CONF_TOKEN) or entry.data[CONF_TOKEN]
+            errors = await _check(self.hass, url, token)
+            if not errors:
+                return self.async_update_reload_and_abort(entry, data_updates={CONF_URL: url, CONF_TOKEN: token})
+        return self.async_show_form(step_id="reconfigure", errors=errors, data_schema=vol.Schema({
+            vol.Required(CONF_URL, default=entry.data[CONF_URL]): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
+            vol.Optional(CONF_TOKEN): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+        }))
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:

@@ -4,14 +4,28 @@
       "user": {
         "title": "Dom Gemma",
         "description": "Adres serwera DomGemma w sieci domowej (np. http://<ip-telefonu>:8765) i jego token z files/config.json.",
-        "data": {"url": "Adres serwera", "token": "Token API"}
+        "data": {
+          "url": "Adres serwera",
+          "token": "Token API"
+        }
+      },
+      "reconfigure": {
+        "title": "Dom Gemma",
+        "description": "Nowy adres serwera (np. po zmianie IP telefonu). Token zostaw pusty, jeśli się nie zmienił.",
+        "data": {
+          "url": "Adres serwera",
+          "token": "Token API"
+        }
       }
     },
     "error": {
       "cannot_connect": "Nie można połączyć się z serwerem.",
       "invalid_auth": "Zły token."
     },
-    "abort": {"already_configured": "Ten serwer jest już skonfigurowany."}
+    "abort": {
+      "already_configured": "Ten serwer jest już skonfigurowany.",
+      "reconfigure_successful": "Zapisano nowy adres."
+    }
   },
   "options": {
     "step": {
