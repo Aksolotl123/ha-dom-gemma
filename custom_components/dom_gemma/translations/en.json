@@ -36,5 +36,12 @@
         }
       }
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "server": {
+        "name": "Server"
+      }
+    }
   }
 }

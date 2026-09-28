@@ -11,4 +11,5 @@ CONFIRM_TTL = 60      # s; po tym czasie "tak" nie wykona już oczekującej akcj
 CLARIFY_TTL = 60      # s; po tym czasie odpowiedź na „Które światło…?” jest traktowana jak nowe polecenie
 DEVICES_TTL = 600     # s; co tyle odświeżamy listę urządzeń z serwera (nowy pakiet bez restartu HA)
 BULB_WAIT = 20        # s; tyle czekamy, aż żarówka za włączonym przełącznikiem się zgłosi (zwykle ~3 s)
-BULB_STEP = 1         # s; odstęp między sprawdzeniami stanu żarówek
+HEALTH_TIMEOUT = 5    # s; czujnik łączności (/health co 30 s)
+BULB_STEP = 1        # s; odstęp między sprawdzeniami stanu żarówek
