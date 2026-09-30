@@ -100,7 +100,7 @@ class DomGemmaAgent(conversation.ConversationEntity):
         errors = [] if result.get("valid") else list(result.get("errors") or ["odpowiedź niepoprawna"])
         # przed potwierdzeniem: „dim płyta_indukcyjna” ma paść tu, a nie po „tak”
         errors += logic.check_actions(actions, set(self.hass.states.async_entity_ids()), self._exposed(actions),
-                                      logic.dimmable_relays(self._devices))
+                                      logic.dimmable_relays(self._devices), logic.color_entities(self._devices))
         if errors:
             _LOGGER.info("Odrzucone %r -> %r: %s", user_input.text, result.get("commands"), errors)
             msg = "Nie zrozumiałem, co mam zrobić. Spróbuj powiedzieć to inaczej."
@@ -165,16 +165,28 @@ class DomGemmaAgent(conversation.ConversationEntity):
     async def _execute(self, actions: list[dict], user_input: conversation.ConversationInput) -> str:
         sentences = []
         powered: list[str] = []  # włączone przełączniki - ich żarówki dopilnujemy po odpowiedzi
+        index = logic.bulb_index(self._devices)
         for a in actions:
             if a["action"] == "get_state":
                 info = self._info([a])
                 sentences.append("; ".join(logic.state_sentence(e, info) for e in a["entity_id"]))
                 continue
+            # v6: pojedyncze żarówki - przez ich przełącznik (logic.bulb_plan); reszta akcji zwykłą drogą
+            if bulb_ids := [e for e in a["entity_id"] if e in index]:
+                part = {**a, "entity_id": bulb_ids}
+                ok = await self._execute_bulbs(part, index, user_input.context)
+                if ok is not None:
+                    sentences.append(logic.action_sentence(part, self._info([part]), self._devices) if ok else
+                                     f"Nie udało się: {logic._names(bulb_ids, self._info([part]), self._devices, 'nom')}")
+                    rest = [e for e in a["entity_id"] if e not in index]
+                    if not rest:
+                        continue
+                    a = {**a, "entity_id": rest}
             domain, _, service = a["service"].partition(".")
             data = {"entity_id": a["entity_id"], **(a.get("data") or {})}
-            dim = a["service"] == "switch.turn_on" and bool(a.get("data"))
-            if dim:
-                # światło za przełącznikiem: przełącznik bez jasności, jasność ustawiamy na żarówkach po odpowiedzi
+            via_bulbs = a["service"] == "switch.turn_on" and bool(a.get("data"))
+            if via_bulbs:
+                # światło za przełącznikiem: przełącznik bez danych, jasność/kolor ustawiamy na żarówkach po odpowiedzi
                 was_off = any((s := self.hass.states.get(e)) is None or s.state != "on" for e in a["entity_id"])
                 data = {"entity_id": a["entity_id"]}
             try:
@@ -186,10 +198,11 @@ class DomGemmaAgent(conversation.ConversationEntity):
                 _LOGGER.warning("Błąd %s: %s", a["service"], err)
                 sentences.append(f"Nie udało się: {logic._names(a['entity_id'], self._info([a]), self._devices, 'nom')}")
                 continue
-            if dim:
+            if via_bulbs:
                 if bulbs := logic.bulbs_for(a["entity_id"], self._devices or []):
+                    plan = logic.BulbPlan([], [], [], sorted(bulbs), [], was_off)
                     self.entry.async_create_background_task(
-                        self.hass, self._dim_bulbs(bulbs, a["data"], was_off, user_input.context), "dom_gemma_dim")
+                        self.hass, self._apply_bulbs(plan, a["data"], user_input.context), "dom_gemma_dim")
             elif a["service"] == "switch.turn_on":
                 powered += a["entity_id"]
             sentences.append(logic.action_sentence(a, self._info([a]), self._devices))
@@ -198,6 +211,33 @@ class DomGemmaAgent(conversation.ConversationEntity):
             self.entry.async_create_background_task(
                 self.hass, self._light_bulbs(bulbs, user_input.context), "dom_gemma_bulbs")
         return ". ".join(logic.cap(s) for s in sentences) + "."
+
+    async def _execute_bulbs(self, a: dict, index: dict[str, logic.DeviceName], context) -> bool | None:
+        """Pojedyncze żarówki (v6): przełączniki od razu, zapalenie wybranych i zgaszenie sąsiednich w tle.
+        None = to nie wł/wył samych żarówek (akcja idzie zwykłą drogą, light.* wprost); False = błąd HA."""
+        watched = set(index) | {d.relay for d in index.values()}
+        states = {e: s.state if (s := self.hass.states.get(e)) else None for e in watched}
+        data = a.get("data") or {}
+        plan = logic.bulb_plan(a["service"], a["entity_id"], data, index, states)
+        if plan is None:
+            return None
+        _LOGGER.debug("Żarówki %s %s: %s", a["service"], a["entity_id"], plan)
+        try:
+            if plan.relays_on:
+                await self.hass.services.async_call("switch", "turn_on", {"entity_id": plan.relays_on},
+                                                    blocking=True, context=context)
+            if plan.lights_off:
+                await self.hass.services.async_call("light", "turn_off", {"entity_id": plan.lights_off},
+                                                    blocking=True, context=context)
+            if plan.relays_off:
+                await self.hass.services.async_call("switch", "turn_off", {"entity_id": plan.relays_off},
+                                                    blocking=True, context=context)
+        except HomeAssistantError as err:
+            _LOGGER.warning("Błąd sterowania żarówkami %s: %s", a["entity_id"], err)
+            return False
+        if plan.targets or plan.siblings_off:
+            self.entry.async_create_background_task(self.hass, self._apply_bulbs(plan, data, context), "dom_gemma_bulb")
+        return True
 
     async def _light_bulbs(self, bulbs: set[str], context) -> None:
         """Czeka, aż żarówki za włączonym przełącznikiem się zgłoszą, i włącza te, które wstały zgaszone."""
@@ -221,34 +261,39 @@ class DomGemmaAgent(conversation.ConversationEntity):
         _LOGGER.warning("Żarówki nie włączyły się w %s s: %s", BULB_WAIT,
                         {b: s.state if (s := self.hass.states.get(b)) else None for b in sorted(bulbs)})
 
-    async def _dim_bulbs(self, bulbs: set[str], data: dict, relay_was_off: bool, context) -> None:
-        """Jasność świateł za przełącznikiem: (przełącznik już włączony) -> czekanie na żarówki -> light.turn_on
-        z jasnością, aż nowy stan ją potwierdzi. Świeżo zasilona żarówka gubi polecenia przez pierwsze sekundy,
-        a jej stan w HA bywa nieaktualny - stąd przerwa i potwierdzenie stanem nowszym niż polecenie."""
-        if relay_was_off:
+    async def _apply_bulbs(self, plan: logic.BulbPlan, data: dict, context) -> None:
+        """Żarówki za przełącznikiem: plan.targets zapalić z jasnością/kolorem (data), plan.siblings_off zgasić -
+        aż nowy stan to potwierdzi. Świeżo zasilona żarówka gubi polecenia przez pierwsze sekundy, a jej stan w HA
+        bywa nieaktualny - stąd przerwa po włączeniu zasilania i potwierdzenie stanem nowszym niż polecenie."""
+        if plan.relay_was_off:
             await asyncio.sleep(BULB_SETTLE)
-        target = data.get("brightness_pct")
-        sent: dict[str, tuple[float, int]] = {}
+        sent_on: dict[str, tuple[float, int]] = {}
+        sent_off: dict[str, tuple[float, int]] = {}
         deadline = time.monotonic() + BULB_WAIT
         while time.monotonic() < deadline:
-            info = {b: (s.state, s.attributes.get("brightness"), s.last_updated.timestamp())
-                    if (s := self.hass.states.get(b)) else (None, None, 0.0) for b in bulbs}
-            todo, done = logic.bulbs_dim_plan(info, sent, target, time.time())
-            if done:
+            on_info = {b: (s.state, s.attributes.get("brightness"), s.last_updated.timestamp())
+                       if (s := self.hass.states.get(b)) else (None, None, 0.0) for b in plan.targets}
+            off_info = {b: (s.state, s.last_updated.timestamp()) if (s := self.hass.states.get(b)) else (None, 0.0)
+                        for b in plan.siblings_off}
+            now = time.time()
+            todo_on, done_on = logic.bulbs_dim_plan(on_info, sent_on, data, now)
+            todo_off, done_off = logic.bulbs_off_plan(off_info, sent_off, now, force=plan.relay_was_off)
+            if done_on and done_off:
                 return
-            if todo:
-                now = time.time()
+            for todo, sent, service, extra in ((todo_on, sent_on, "turn_on", data), (todo_off, sent_off, "turn_off", {})):
+                if not todo:
+                    continue
                 for b in todo:
                     sent[b] = (now, sent.get(b, (0.0, 0))[1] + 1)
                 try:
-                    await self.hass.services.async_call("light", "turn_on", {"entity_id": todo, **data},
+                    await self.hass.services.async_call("light", service, {"entity_id": todo, **extra},
                                                         blocking=True, context=context)
                 except HomeAssistantError as err:
                     _LOGGER.debug("Żarówki %s jeszcze nie odpowiadają: %s", todo, err)
             await asyncio.sleep(BULB_STEP)
-        _LOGGER.warning("Jasność %s nie potwierdzona w %s s: %s", data, BULB_WAIT,
+        _LOGGER.warning("Żarówki nie potwierdziły stanu w %s s (%s): %s", BULB_WAIT, data,
                         {b: (s.state, s.attributes.get("brightness")) if (s := self.hass.states.get(b)) else None
-                         for b in sorted(bulbs)})
+                         for b in plan.targets + plan.siblings_off})
 
     def _reply(self, user_input, chat_log, response, speech: str, keep_listening: bool = False):
         speech = logic.cap(speech)

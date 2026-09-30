@@ -16,6 +16,11 @@ domu) działającego na telefonie w sieci domowej. Model zwraca akcje, a integra
   zgłosi, i włącza ją, jeśli wstała zgaszona (pole `bulbs` w liście urządzeń serwera),
 - ustawia jasność takich świateł: włącza przełącznik, po chwili wysyła jasność do żarówek i ponawia, dopóki nowy
   stan żarówki jej nie potwierdzi; jasność na przełączniku bez żarówek (gniazdko) jest odrzucana,
+- zmienia kolor świateł (`color_name` / `color_temp_kelvin`) — tylko tych, które lista urządzeń oznacza jako
+  kolorowe (`color`); za przełącznikiem kolor trafia do żarówek jak jasność,
+- steruje pojedynczą żarówką za przełącznikiem (pole `relay` w liście urządzeń): „włącz żarówkę 1” włącza
+  przełącznik, zapala tę żarówkę i gasi pozostałe w pomieszczeniu; po zgaszeniu ostatniej świecącej żarówki
+  wyłącza też przełącznik,
 - gdy serwer nie odpowiada, przekazuje zdanie wbudowanemu agentowi HA (opcja); czujnik „Serwer” (łączność,
   sprawdzany co 30 s) pokazuje, czy serwer działa — można na nim oprzeć powiadomienie.
 

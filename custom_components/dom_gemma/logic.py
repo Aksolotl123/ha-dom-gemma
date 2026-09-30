@@ -17,12 +17,19 @@ ALLOWED_SERVICES: dict[str, set[str]] = {
     "script": {"turn_on"},
     "input_button": {"press"},
 }
+_COLOR_KEYS = {"color_name", "color_temp_kelvin"}
 ALLOWED_DATA: dict[str, set[str]] = {
-    "light.turn_on": {"brightness_pct", "brightness_step_pct"},
-    # jasność na przełączniku = światło za przekaźnikiem; check_actions przepuszcza ją tylko dla przełączników z żarówkami
-    "switch.turn_on": {"brightness_pct", "brightness_step_pct"},
+    "light.turn_on": {"brightness_pct", "brightness_step_pct"} | _COLOR_KEYS,
+    # jasność/kolor na przełączniku = światło za przekaźnikiem; check_actions przepuszcza je tylko dla przełączników
+    # z żarówkami (kolor - z kolorowymi żarówkami)
+    "switch.turn_on": {"brightness_pct", "brightness_step_pct"} | _COLOR_KEYS,
     "media_player.volume_mute": {"is_volume_muted"},
 }
+
+# Kolory z serwera (schema.COLORS) -> słowo do odpowiedzi „Ustawiam lampkę na kolor czerwony”
+COLOR_WORDS = {"red": "czerwony", "green": "zielony", "blue": "niebieski", "yellow": "żółty", "orange": "pomarańczowy",
+               "purple": "fioletowy", "hotpink": "różowy"}
+KELVIN_WORDS = {2700: "ciepły biały", 4000: "biały", 6500: "zimny biały"}
 
 _YES = {"tak", "potwierdzam", "potwierdz", "zgadza sie", "dobrze", "ok", "okej", "jasne", "tak zrob to", "zrob to"}
 _NO = {"nie", "anuluj", "stop", "nie rob tego", "zostaw", "nie trzeba"}
@@ -137,15 +144,16 @@ def dimmable_relays(devices: list[DeviceName] | None) -> frozenset[str]:
 
 
 def bulbs_dim_plan(info: dict[str, tuple[str | None, int | None, float]], sent: dict[str, tuple[float, int]],
-                   target_pct: int | None, now: float, retry_after: float = 3.0,
+                   data: dict, now: float, retry_after: float = 3.0,
                    max_tries: int = 3) -> tuple[list[str], bool]:
-    """Ustawianie jasności żarówek za przełącznikiem -> (do wysłania teraz, czy koniec).
+    """Ustawianie jasności/koloru żarówek (albo samo zapalenie, data={}) -> (do wysłania teraz, czy koniec).
 
     info: żarówka -> (stan, jasność 0-255, czas ostatniej zmiany stanu); sent: żarówka -> (czas wysłania, próby).
-    Żarówka jest załatwiona dopiero, gdy stan NOWSZY niż polecenie jest „on” z zadaną jasnością: Lidl po krótkim
-    zaniku prądu potrafi nie raportować (HA pokazuje stary „off”), a Z2M nie zgłasza błędu, gdy polecenie przepadnie.
-    target_pct=None (krok ±N) - wystarczy nowszy stan „on”; ponawianie kroku by go zsumowało, więc tylko 1 próba."""
-    tries = max_tries if target_pct is not None else 1
+    Żarówka jest załatwiona dopiero, gdy stan NOWSZY niż polecenie jest „on” (z zadaną jasnością, jeśli ją podano):
+    Lidl po krótkim zaniku prądu potrafi nie raportować (HA pokazuje stary „off”), a Z2M nie zgłasza błędu, gdy
+    polecenie przepadnie. Krok ±N (brightness_step_pct) - ponawianie by go zsumowało, więc tylko 1 próba."""
+    tries = 1 if "brightness_step_pct" in data else max_tries
+    target_pct = data.get("brightness_pct")
     want = round(target_pct * 255 / 100) if target_pct is not None else None
     todo, pending = [], False
     for bulb, (state, brightness, updated) in sorted(info.items()):
@@ -165,10 +173,88 @@ def bulbs_dim_plan(info: dict[str, tuple[str | None, int | None, float]], sent: 
     return todo, not pending
 
 
+def bulbs_off_plan(info: dict[str, tuple[str | None, float]], sent: dict[str, tuple[float, int]], now: float,
+                   force: bool, retry_after: float = 3.0, max_tries: int = 3) -> tuple[list[str], bool]:
+    """Gaszenie żarówek na tym samym przełączniku co wybrana -> (do zgaszenia teraz, czy koniec).
+
+    info: żarówka -> (stan, czas ostatniej zmiany); sent: żarówka -> (czas wysłania, próby).
+    force=True po włączeniu zasilania: żarówki wstają w stanie „restore”, a HA potrafi pokazywać stary „off” -
+    wtedy gasimy każdą i czekamy na stan nowszy niż polecenie. force=False: „off” w HA wystarcza."""
+    todo, pending = [], False
+    for bulb, (state, updated) in sorted(info.items()):
+        if state is None:
+            continue
+        last = sent.get(bulb)
+        if state == "off" and ((last and updated > last[0]) or (not last and not force)):
+            continue  # zgaszona
+        if last and last[1] >= max_tries:
+            continue
+        pending = True
+        if state in ("unavailable", "unknown"):
+            continue
+        if last is None or now - last[0] >= retry_after:
+            todo.append(bulb)
+    return todo, not pending
+
+
+# ----------------------------------------------------------------------------- pojedyncze żarówki (v6)
+# Żarówka jako osobne urządzenie (relay = przełącznik, który ją zasila; area = pokój). Uzgodnione z użytkownikiem
+# 29.09: „włącz żarówkę 1” = w pokoju świeci TYLKO ta (jej przełącznik włączony, pozostałe żarówki zgaszone,
+# przełączniki bez wybranych żarówek wyłączone) - także gdy już świeciły. Zmiana jasności/koloru przy włączonym
+# przełączniku nie rusza pozostałych. „Wyłącz żarówkę” gasi ją, a gdy na przełączniku nic już nie świeci -
+# wyłącza przełącznik.
+
+@dataclass
+class BulbPlan:
+    relays_on: list[str]      # przełączniki do włączenia od razu
+    relays_off: list[str]     # przełączniki do wyłączenia od razu (żadna ich żarówka nie ma świecić)
+    lights_off: list[str]     # żarówki do zgaszenia od razu
+    targets: list[str]        # żarówki do zapalenia (z danymi) w tle, gdy się zgłoszą
+    siblings_off: list[str]   # żarówki do zgaszenia w tle (ten sam przełącznik co cel)
+    relay_was_off: bool       # zasilanie dopiero włączane - żarówki potrzebują chwili
+
+
+def bulb_index(devices: list[DeviceName] | None) -> dict[str, DeviceName]:
+    """Encja żarówki -> jej urządzenie (tylko żarówki z przełącznikiem)."""
+    return {e: d for d in devices or [] if d.relay for e in d.ids}
+
+
+def bulb_plan(service: str, ids: list[str], data: dict, index: dict[str, DeviceName],
+              states: dict[str, str | None]) -> BulbPlan | None:
+    """Plan dla light.turn_on/turn_off na samych żarówkach z przełącznikiem. None = to nie jest taka akcja.
+    states: encja (żarówki i przełączniki) -> stan w HA."""
+    if not ids or not all(e in index for e in ids) or service not in ("light.turn_on", "light.turn_off"):
+        return None
+    targets = sorted(set(ids))
+    relays = sorted({index[e].relay for e in targets})
+    if service == "light.turn_off":
+        lights_off = [e for e in targets if states.get(e) == "on"]
+        relays_off = [r for r in relays if states.get(r) == "on" and not any(
+            states.get(e) == "on" for e, d in index.items() if d.relay == r and e not in targets)]
+        return BulbPlan([], relays_off, lights_off, [], [], False)
+    relays_on = [r for r in relays if states.get(r) != "on"]
+    exclusive = not data or bool(relays_on)
+    siblings: list[str] = []
+    relays_off: list[str] = []
+    if exclusive:
+        areas = {index[e].area for e in targets}
+        others = [e for e, d in index.items() if d.area in areas and e not in targets]
+        siblings = sorted(e for e in others if index[e].relay in relays)
+        relays_off = sorted({index[e].relay for e in others
+                             if index[e].relay not in relays and states.get(index[e].relay) == "on"})
+    return BulbPlan(relays_on, relays_off, [], targets, siblings, bool(relays_on))
+
+
+def color_entities(devices: list[DeviceName] | None) -> frozenset[str]:
+    """Encje, którym wolno zmienić kolor (urządzenia z color w pakiecie serwera)."""
+    return frozenset(e for d in devices or [] if d.color for e in d.ids)
+
+
 def check_actions(actions: list[dict], known_entities: set[str], exposed: set[str] | None,
-                  dimmable: frozenset[str] = frozenset()) -> list[str]:
+                  dimmable: frozenset[str] = frozenset(), colorful: frozenset[str] = frozenset()) -> list[str]:
     """Walidacja po stronie HA. exposed=None -> nie wymagamy wystawienia do Assist.
-    dimmable: przełączniki z żarówkami (jasność na innych przełącznikach = błąd; pusty zbiór = żadnych)."""
+    dimmable: przełączniki z żarówkami (jasność na innych przełącznikach = błąd; pusty zbiór = żadnych).
+    colorful: encje z kolorem (color_entities) - kolor na innych = błąd."""
     if not isinstance(actions, list) or not actions:
         return ["brak akcji"]
     errors = []
@@ -200,6 +286,8 @@ def check_actions(actions: list[dict], known_entities: set[str], exposed: set[st
         # jasność na przełączniku bez żarówek (gniazdko, zmywarka, płyta) włączyłaby zasilanie urządzenia
         if service == "switch.turn_on" and a.get("data") and not set(ids) <= dimmable:
             errors.append(f"jasność tylko dla świateł z żarówkami: {sorted(set(ids) - dimmable)}")
+        if set(a.get("data") or {}) & _COLOR_KEYS and not set(ids) <= colorful:
+            errors.append(f"kolor tylko dla kolorowych świateł: {sorted(set(ids) - colorful)}")
     return errors
 
 
@@ -228,6 +316,9 @@ class DeviceName:
     acc: str
     kind: str = ""
     bulbs: frozenset[str] = frozenset()  # żarówki (light.*) zasilane przez te przełączniki
+    relay: str | None = None             # v6: pojedyncza żarówka - przełącznik, który ją zasila
+    area: str | None = None
+    color: bool = False                  # v6: światło zmienia kolor
 
 
 def names_from_server(devices: dict) -> list[DeviceName]:
@@ -237,8 +328,15 @@ def names_from_server(devices: dict) -> list[DeviceName]:
         if isinstance(d, dict) and d.get("ids") and d.get("name"):
             # żarówki tylko z domeny light - agent włącza je sam, bez modelu i bez listy dozwolonych usług
             bulbs = frozenset(b for b in d.get("bulbs") or [] if isinstance(b, str) and b.startswith("light."))
-            out.append(DeviceName(frozenset(d["ids"]), d["name"], d.get("acc") or d["name"],
-                                  str(d.get("kind") or ""), bulbs))
+            ids = frozenset(d["ids"])
+            relay = d.get("relay")
+            # żarówka z przełącznikiem: jedna encja light.*, przełącznik switch.* (agent sam go włącza i wyłącza)
+            if not (isinstance(relay, str) and relay.startswith("switch.") and len(ids) == 1
+                    and next(iter(ids)).startswith("light.")):
+                relay = None
+            area = d.get("area") if isinstance(d.get("area"), str) else None
+            out.append(DeviceName(ids, d["name"], d.get("acc") or d["name"], str(d.get("kind") or ""), bulbs,
+                                  relay, area, d.get("color") is True))
     return out
 
 
@@ -278,6 +376,9 @@ def action_sentence(a: dict, info: dict[str, EntityInfo], devices: list[DeviceNa
         return f"Ustawiam {who} na {data['brightness_pct']}%"
     if "brightness_step_pct" in data:
         return f"{'Rozjaśniam' if data['brightness_step_pct'] > 0 else 'Przyciemniam'} {who}"
+    if "color_name" in data or "color_temp_kelvin" in data:
+        word = COLOR_WORDS.get(data.get("color_name")) or KELVIN_WORDS.get(data.get("color_temp_kelvin"), "wybrany")
+        return f"Ustawiam {who} na kolor {word}"
     if domain == "script":
         return f"Uruchamiam {who}"
     return f"{_VERB.get(name, 'Wykonuję')} {who}"

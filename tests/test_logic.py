@@ -167,22 +167,140 @@ def test_bulbs_dim_plan():
     want = round(30 * 255 / 100)
     # przed wysłaniem: wysyłamy do dostępnych (także pokazujących stary „off”), czekamy na niedostępne
     todo, done = logic.bulbs_dim_plan({"a": ("off", None, 100.0), "b": ("unavailable", None, 100.0),
-                                       "c": (None, None, 0.0)}, {}, 30, now=200.0)
+                                       "c": (None, None, 0.0)}, {}, {"brightness_pct": 30}, now=200.0)
     assert todo == ["a"] and not done
     # stan sprzed polecenia to nie potwierdzenie; zbyt wcześnie na ponowienie
-    todo, done = logic.bulbs_dim_plan({"a": ("on", 255, 150.0)}, {"a": (200.0, 1)}, 30, now=201.0)
+    todo, done = logic.bulbs_dim_plan({"a": ("on", 255, 150.0)}, {"a": (200.0, 1)}, {"brightness_pct": 30}, now=201.0)
     assert todo == [] and not done
     # nowszy stan z inną jasnością (np. 100% po starcie) -> ponowienie po czasie
-    todo, done = logic.bulbs_dim_plan({"a": ("on", 255, 202.0)}, {"a": (200.0, 1)}, 30, now=204.0)
+    todo, done = logic.bulbs_dim_plan({"a": ("on", 255, 202.0)}, {"a": (200.0, 1)}, {"brightness_pct": 30}, now=204.0)
     assert todo == ["a"] and not done
     # nowszy stan z zadaną jasnością -> koniec
-    assert logic.bulbs_dim_plan({"a": ("on", want + 2, 202.0)}, {"a": (200.0, 1)}, 30, now=204.0) == ([], True)
+    assert logic.bulbs_dim_plan({"a": ("on", want + 2, 202.0)}, {"a": (200.0, 1)}, {"brightness_pct": 30}, now=204.0) == ([], True)
     # próby wyczerpane -> koniec (bez nieskończonego ponawiania)
-    assert logic.bulbs_dim_plan({"a": ("on", 255, 202.0)}, {"a": (200.0, 3)}, 30, now=210.0) == ([], True)
+    assert logic.bulbs_dim_plan({"a": ("on", 255, 202.0)}, {"a": (200.0, 3)}, {"brightness_pct": 30}, now=210.0) == ([], True)
     # krok ±N: jedna próba (ponowienie zsumowałoby kroki), potwierdza nowszy stan „on”
-    assert logic.bulbs_dim_plan({"a": ("on", 100, 199.0)}, {"a": (200.0, 1)}, None, now=210.0) == ([], True)
-    assert logic.bulbs_dim_plan({"a": ("on", 100, 202.0)}, {"a": (200.0, 1)}, None, now=203.0) == ([], True)
-    assert logic.bulbs_dim_plan({}, {}, 30, now=0.0) == ([], True)
+    assert logic.bulbs_dim_plan({"a": ("on", 100, 199.0)}, {"a": (200.0, 1)}, {"brightness_step_pct": -20}, now=210.0) == ([], True)
+    assert logic.bulbs_dim_plan({"a": ("on", 100, 202.0)}, {"a": (200.0, 1)}, {"brightness_step_pct": -20}, now=203.0) == ([], True)
+    assert logic.bulbs_dim_plan({}, {}, {"brightness_pct": 30}, now=0.0) == ([], True)
+    # kolor / samo zapalenie: ponawiane (idempotentne), potwierdza nowszy stan „on”
+    assert logic.bulbs_dim_plan({"a": ("off", None, 202.0)}, {"a": (200.0, 1)}, {"color_name": "red"}, now=204.0) == (["a"], False)
+    assert logic.bulbs_dim_plan({"a": ("on", 10, 202.0)}, {"a": (200.0, 1)}, {"color_name": "red"}, now=204.0) == ([], True)
+    assert logic.bulbs_dim_plan({"a": ("off", None, 100.0)}, {}, {}, now=200.0) == (["a"], False)
+
+
+def test_bulbs_off_plan():
+    # świeci -> gasimy; niedostępna -> czekamy; zgaszona/brak encji -> załatwiona
+    assert logic.bulbs_off_plan({"a": ("on", 1.0), "b": ("unavailable", 1.0), "c": ("off", 1.0), "d": (None, 0.0)},
+                                {}, now=10.0, force=False) == (["a"], False)
+    # po włączeniu zasilania stary „off” nie wystarcza - gasimy i czekamy na nowszy stan
+    assert logic.bulbs_off_plan({"c": ("off", 1.0)}, {}, now=10.0, force=True) == (["c"], False)
+    assert logic.bulbs_off_plan({"c": ("off", 1.0)}, {"c": (10.0, 1)}, now=11.0, force=True) == ([], False)
+    assert logic.bulbs_off_plan({"c": ("off", 12.0)}, {"c": (10.0, 1)}, now=13.0, force=True) == ([], True)
+    # próby wyczerpane -> koniec
+    assert logic.bulbs_off_plan({"a": ("on", 12.0)}, {"a": (10.0, 3)}, now=20.0, force=True) == ([], True)
+    assert logic.bulbs_off_plan({}, {}, now=0.0, force=True) == ([], True)
+
+
+# ----------------------------------------------------------------------------- pojedyncze żarówki, kolor (v6)
+SYP = "switch.syp"
+K1, K2 = "switch.k_l1", "switch.k_l2"
+BULB_DEVS = logic.names_from_server({
+    "swiatlo_sypialni": {"ids": [SYP], "name": "światło w sypialni", "kind": "light", "area": "sypialnia",
+                         "bulbs": ["light.s1", "light.s2", "light.s3"], "color": True},
+    "zarowka_1_sypialni": {"ids": ["light.s1"], "name": "żarówka 1 w sypialni", "acc": "żarówkę 1 w sypialni",
+                           "kind": "light", "area": "sypialnia", "relay": SYP, "bulb": 1, "color": True},
+    "zarowka_2_sypialni": {"ids": ["light.s2"], "name": "żarówka 2 w sypialni", "kind": "light", "area": "sypialnia",
+                           "relay": SYP, "bulb": 2, "color": True},
+    "zarowka_3_sypialni": {"ids": ["light.s3"], "name": "żarówka 3 w sypialni", "kind": "light", "area": "sypialnia",
+                           "relay": SYP, "bulb": 3, "color": True},
+    "zarowka_1_kuchni": {"ids": ["light.k1"], "name": "żarówka 1 w kuchni", "kind": "light", "area": "kuchnia",
+                         "relay": K2, "bulb": 1},
+    "zarowka_2_kuchni": {"ids": ["light.k2"], "name": "żarówka 2 w kuchni", "kind": "light", "area": "kuchnia",
+                         "relay": K2, "bulb": 2},
+    "zarowka_3_kuchni": {"ids": ["light.k3"], "name": "żarówka 3 w kuchni", "kind": "light", "area": "kuchnia",
+                         "relay": K1, "bulb": 3},
+    "zly": {"ids": ["light.x", "light.y"], "name": "zły", "kind": "light", "relay": SYP},       # 2 encje - nie żarówka
+    "zly2": {"ids": ["light.z"], "name": "zły 2", "kind": "light", "relay": "light.syp"},      # relay nie switch.*
+})
+IDX = logic.bulb_index(BULB_DEVS)
+
+
+def test_bulb_index_accepts_only_single_light_with_switch_relay():
+    assert set(IDX) == {"light.s1", "light.s2", "light.s3", "light.k1", "light.k2", "light.k3"}
+    assert IDX["light.s1"].relay == SYP and IDX["light.s1"].area == "sypialnia" and IDX["light.s1"].color
+    assert not IDX["light.k1"].color
+
+
+def test_bulb_plan_turn_on_from_dark_room_lights_only_the_target():
+    states = {SYP: "off", "light.s1": "unavailable", "light.s2": "unavailable", "light.s3": "unavailable"}
+    plan = logic.bulb_plan("light.turn_on", ["light.s1"], {}, IDX, states)
+    assert plan == logic.BulbPlan([SYP], [], [], ["light.s1"], ["light.s2", "light.s3"], True)
+
+
+def test_bulb_plan_turn_on_when_all_lit_is_exclusive():
+    states = {SYP: "on", "light.s1": "on", "light.s2": "on", "light.s3": "on"}
+    plan = logic.bulb_plan("light.turn_on", ["light.s1"], {}, IDX, states)
+    assert plan == logic.BulbPlan([], [], [], ["light.s1"], ["light.s2", "light.s3"], False)
+
+
+def test_bulb_plan_color_on_lit_relay_keeps_siblings_but_color_from_dark_is_exclusive():
+    lit = {SYP: "on", "light.s1": "on", "light.s2": "on", "light.s3": "on"}
+    assert logic.bulb_plan("light.turn_on", ["light.s2"], {"color_name": "red"}, IDX, lit) == \
+        logic.BulbPlan([], [], [], ["light.s2"], [], False)
+    dark = {SYP: "off"}
+    assert logic.bulb_plan("light.turn_on", ["light.s2"], {"color_name": "red"}, IDX, dark).siblings_off == \
+        ["light.s1", "light.s3"]
+
+
+def test_bulb_plan_kitchen_turns_off_the_other_relay():
+    # żarówka 1 (L2) w kuchni: pozostałe na L2 gasimy, przełącznik L1 (żarówka 3) wyłączamy
+    states = {K1: "on", K2: "on", "light.k1": "on", "light.k2": "on", "light.k3": "on"}
+    plan = logic.bulb_plan("light.turn_on", ["light.k1"], {}, IDX, states)
+    assert plan == logic.BulbPlan([], [K1], [], ["light.k1"], ["light.k2"], False)
+    # dwie żarówki na różnych przełącznikach - oba zostają
+    plan = logic.bulb_plan("light.turn_on", ["light.k1", "light.k3"], {}, IDX, states)
+    assert plan.relays_off == [] and plan.siblings_off == ["light.k2"]
+
+
+def test_bulb_plan_turn_off():
+    # zgaszenie jednej z trzech - przełącznik zostaje
+    states = {SYP: "on", "light.s1": "on", "light.s2": "on", "light.s3": "on"}
+    assert logic.bulb_plan("light.turn_off", ["light.s3"], {}, IDX, states) == \
+        logic.BulbPlan([], [], ["light.s3"], [], [], False)
+    # zgaszenie ostatniej świecącej - wyłączamy też przełącznik
+    states = {SYP: "on", "light.s1": "off", "light.s2": "off", "light.s3": "on"}
+    assert logic.bulb_plan("light.turn_off", ["light.s3"], {}, IDX, states) == \
+        logic.BulbPlan([], [SYP], ["light.s3"], [], [], False)
+    # przełącznik wyłączony - nic do zrobienia
+    assert logic.bulb_plan("light.turn_off", ["light.s1"], {}, IDX, {SYP: "off", "light.s1": "unavailable"}) == \
+        logic.BulbPlan([], [], [], [], [], False)
+
+
+def test_bulb_plan_ignores_other_actions():
+    assert logic.bulb_plan("light.turn_on", ["light.lampka"], {}, IDX, {}) is None          # nie żarówka
+    assert logic.bulb_plan("light.turn_on", ["light.s1", "light.lampka"], {}, IDX, {}) is None
+    assert logic.bulb_plan("light.toggle", ["light.s1"], {}, IDX, {}) is None
+    assert logic.bulb_plan("light.turn_on", [], {}, IDX, {}) is None
+
+
+def test_color_gate_and_sentence():
+    known = {SYP, "light.s1", "light.k1", "switch.plug"}
+    colorful = logic.color_entities(BULB_DEVS)
+    assert colorful == {SYP, "light.s1", "light.s2", "light.s3"}
+
+    def color(e, data=None):
+        return [{"action": "call_service", "service": f"{e.split('.')[0]}.turn_on", "entity_id": [e],
+                 "data": data or {"color_name": "red"}}]
+    dimmable = logic.dimmable_relays(BULB_DEVS)
+    assert logic.check_actions(color(SYP), known, None, dimmable, colorful) == []
+    assert logic.check_actions(color("light.s1"), known, None, dimmable, colorful) == []
+    assert logic.check_actions(color("light.k1"), known, None, dimmable, colorful)      # żarówka bez koloru
+    assert logic.check_actions(color("switch.plug"), known, None, dimmable, colorful)   # gniazdko
+    assert logic.check_actions(color(SYP), known, None, dimmable)                       # brak listy: odrzucone
+    assert logic.action_sentence(color("light.s1")[0], {}, BULB_DEVS) == "Ustawiam żarówkę 1 w sypialni na kolor czerwony"
+    assert logic.action_sentence(color("light.s1", {"color_temp_kelvin": 2700})[0], {}, BULB_DEVS) == \
+        "Ustawiam żarówkę 1 w sypialni na kolor ciepły biały"
 
 
 # ----------------------------------------------------------------------------- kilka adresów serwera
