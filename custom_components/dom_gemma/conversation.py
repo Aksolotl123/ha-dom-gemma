@@ -102,7 +102,9 @@ class DomGemmaAgent(conversation.ConversationEntity):
         errors += logic.check_actions(actions, set(self.hass.states.async_entity_ids()), self._exposed(actions),
                                       logic.dimmable_relays(self._devices), logic.color_entities(self._devices))
         if errors:
-            _LOGGER.info("Odrzucone %r -> %r: %s", user_input.text, result.get("commands"), errors)
+            # treść wypowiedzi i komendy serwera tylko w DEBUG (log INFO trafia do zgłoszeń/diagnostyki)
+            _LOGGER.info("Odrzucono polecenie z Assist (%d błąd/błędy walidacji)", len(errors))
+            _LOGGER.debug("Odrzucone %r -> %r: %s", user_input.text, result.get("commands"), errors)
             msg = "Nie zrozumiałem, co mam zrobić. Spróbuj powiedzieć to inaczej."
             response.async_set_error(intent.IntentResponseErrorCode.NO_INTENT_MATCH, msg)
             return self._finish(user_input, chat_log, response, msg)
@@ -115,7 +117,8 @@ class DomGemmaAgent(conversation.ConversationEntity):
         if first["action"] == "unsupported":
             return self._reply(user_input, chat_log, response, first.get("reply") or "Nie umiem tego zrobić.")
 
-        if result.get("needs_confirmation"):
+        # o potwierdzeniu akcji wrażliwych (zamek, skrypt, brama...) decyduje HA, nie tylko serwer
+        if result.get("needs_confirmation") or logic.needs_ha_confirmation(actions, self._device_classes(actions)):
             self._pending[conv_id] = (time.monotonic(), actions)
             question = logic.confirmation_question(actions, self._info(actions), self._devices)
             return self._reply(user_input, chat_log, response, question, keep_listening=True)
@@ -144,7 +147,12 @@ class DomGemmaAgent(conversation.ConversationEntity):
             _LOGGER.debug("Nie pobrano nazw urządzeń: %s", err)
         return None
 
+    def _device_classes(self, actions: list[dict]) -> dict[str, str | None]:
+        return {e: s.attributes.get("device_class") if (s := self.hass.states.get(e)) else None
+                for a in actions for e in a.get("entity_id") or []}
+
     def _exposed(self, actions: list[dict]) -> set[str] | None:
+        # brak klucza = wpis sprzed 0.1.9 (wtedy domyślnie False); nowe wpisy dostają True w config_flow
         if not self.entry.options.get(CONF_REQUIRE_EXPOSED, False):
             return None
         ids = {e for a in actions for e in a.get("entity_id") or []}

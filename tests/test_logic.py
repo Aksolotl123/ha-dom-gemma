@@ -312,3 +312,41 @@ def test_parse_and_order_urls():
     assert logic.order_urls(urls, None) == urls
     assert logic.order_urls(urls, "http://b:8765") == ["http://b:8765", "http://a:8765"]   # ostatnio działający najpierw
     assert logic.order_urls(urls, "http://inny:1") == urls                                 # nieznany - kolejność z konfiguracji
+
+
+# ----------------------------------------------------------------------------- audyt 0.1.9: potwierdzenie po stronie HA
+def _call(service, ids, **extra):
+    return [{"action": "call_service", "service": service, "entity_id": ids, **extra}]
+
+
+def test_ha_forces_confirmation_for_sensitive_actions():
+    # serwer może powiedzieć needs_confirmation=False - HA i tak pyta przy zamku i skrypcie
+    assert logic.needs_ha_confirmation(_call("lock.unlock", ["lock.zamek"]), {})
+    assert logic.needs_ha_confirmation(_call("lock.open", ["lock.zamek"]), {})
+    assert logic.needs_ha_confirmation(_call("script.turn_on", ["script.zamknij_i_zgas_wszystko"]), {})
+    assert logic.needs_ha_confirmation(_call("alarm_control_panel.alarm_disarm", ["alarm_control_panel.dom"]), {})
+    # wrażliwa akcja w środku listy też wymusza pytanie
+    mixed = _call("light.turn_on", ["light.lampka"]) + _call("lock.unlock", ["lock.zamek"])
+    assert logic.needs_ha_confirmation(mixed, {})
+    # brama/garaż: tylko otwieranie, tylko device_class garage/gate
+    assert logic.needs_ha_confirmation(_call("cover.open_cover", ["cover.brama"]), {"cover.brama": "gate"})
+    assert logic.needs_ha_confirmation(_call("cover.toggle", ["cover.garaz"]), {"cover.garaz": "garage"})
+    assert not logic.needs_ha_confirmation(_call("cover.close_cover", ["cover.brama"]), {"cover.brama": "gate"})
+    assert not logic.needs_ha_confirmation(_call("cover.open_cover", ["cover.roleta"]), {"cover.roleta": "shutter"})
+
+
+def test_ha_does_not_force_confirmation_for_ordinary_actions():
+    assert not logic.needs_ha_confirmation(_call("lock.lock", ["lock.zamek"]), {})
+    assert not logic.needs_ha_confirmation(_call("light.turn_on", ["light.lampka"]), {})
+    assert not logic.needs_ha_confirmation(_call("switch.turn_off", ["switch.kuchnia_l1"]), {})
+    assert not logic.needs_ha_confirmation([{"action": "get_state", "entity_id": ["lock.zamek"]}], {})
+    assert not logic.needs_ha_confirmation([], {})
+
+
+def test_public_http_urls_warns_only_outside_lan():
+    lan = ["http://192.168.1.5:8765", "http://10.0.0.2:8765", "http://172.16.3.4:8765", "http://telefon.local:8765",
+           "http://telefon:8765", "http://127.0.0.1:8765", "http://100.101.102.103:8765", "https://8.8.8.8:8765",
+           "http://[fd00::1]:8765"]
+    assert logic.public_http_urls(lan) == []
+    assert logic.public_http_urls(["http://8.8.8.8:8765", "http://moj.example.com:8765", "8.8.4.4:8765"]) == \
+        ["http://8.8.8.8:8765", "http://moj.example.com:8765", "8.8.4.4:8765"]

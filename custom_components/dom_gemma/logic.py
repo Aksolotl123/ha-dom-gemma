@@ -1,9 +1,11 @@
 """Logika agenta bez zależności od Home Assistant (testowana zwykłym pytestem, tests/test_logic.py)."""
 from __future__ import annotations
 
+import ipaddress
 import re
 import unicodedata
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 # Usługi, które agent w ogóle wykona - niezależnie od tego, co zwróci serwer (druga warstwa walidacji).
 # Uprawnienia HA tu nie chronią: zwykły użytkownik może domyślnie sterować wszystkim, a satelity głosowe
@@ -17,6 +19,12 @@ ALLOWED_SERVICES: dict[str, set[str]] = {
     "script": {"turn_on"},
     "input_button": {"press"},
 }
+# Akcje wrażliwe: HA pyta o potwierdzenie ZAWSZE, niezależnie od needs_confirmation z serwera (podstawiony
+# serwer albo MITM na http nie może otworzyć zamka ani uruchomić skryptu bez „tak”). Część z nich nie jest dziś
+# na liście ALLOWED_SERVICES - zostają tu na wypadek jej rozszerzenia.
+SENSITIVE_SERVICES = {"lock.unlock", "lock.open"}
+SENSITIVE_DOMAINS = {"script"}                  # każdy skrypt (może robić cokolwiek)
+SENSITIVE_COVER_CLASSES = {"garage", "gate"}    # cover.open*/toggle dla bramy i garażu
 _COLOR_KEYS = {"color_name", "color_temp_kelvin"}
 ALLOWED_DATA: dict[str, set[str]] = {
     "light.turn_on": {"brightness_pct", "brightness_step_pct"} | _COLOR_KEYS,
@@ -136,6 +144,49 @@ def parse_urls(text: str) -> list[str]:
 def order_urls(urls: list[str], good: str | None) -> list[str]:
     """Ostatnio działający adres najpierw, reszta w kolejności z konfiguracji."""
     return ([good] if good in urls else []) + [u for u in urls if u != good]
+
+
+_LOCAL_SUFFIXES = (".local", ".lan", ".home", ".internal", ".home.arpa", ".localdomain")
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
+
+def public_http_urls(urls: list[str]) -> list[str]:
+    """Adresy http:// (token jawnym tekstem), które nie wyglądają na sieć lokalną: publiczne IP albo nazwa
+    spoza typowych domen lokalnych. Tylko do ostrzeżenia w logu - konfiguracji nie blokujemy."""
+    out = []
+    for url in urls:
+        parts = urlsplit(url if "://" in url else f"http://{url}")
+        if parts.scheme.lower() != "http":
+            continue
+        host = (parts.hostname or "").lower()
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            local = host == "localhost" or "." not in host or host.endswith(_LOCAL_SUFFIXES)
+        else:
+            # 100.64/10 (CGNAT) - np. Tailscale, ruch i tak szyfrowany
+            local = ip.is_private or ip.is_loopback or ip.is_link_local or ip in _CGNAT
+        if not local:
+            out.append(url)
+    return out
+
+
+def needs_ha_confirmation(actions: list[dict], device_classes: dict[str, str | None]) -> bool:
+    """Czy HA musi zapytać o potwierdzenie bez względu na serwer (SENSITIVE_*).
+    device_classes: encja -> device_class ze stanu w HA (dla bram/garaży)."""
+    for a in actions:
+        if a.get("action") != "call_service":
+            continue
+        service = str(a.get("service", ""))
+        domain, _, name = service.partition(".")
+        if service in SENSITIVE_SERVICES or domain in SENSITIVE_DOMAINS:
+            return True
+        if domain == "alarm_control_panel" and "disarm" in name:
+            return True
+        if domain == "cover" and (name.startswith("open") or name == "toggle") and any(
+                device_classes.get(e) in SENSITIVE_COVER_CLASSES for e in a.get("entity_id") or []):
+            return True
+    return False
 
 
 def dimmable_relays(devices: list[DeviceName] | None) -> frozenset[str]:

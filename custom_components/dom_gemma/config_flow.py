@@ -30,7 +30,10 @@ class DomGemmaConfigFlow(ConfigFlow, domain=DOMAIN):
             self._async_abort_entries_match({CONF_URL: url})
             errors = await _check(self.hass, url, user_input[CONF_TOKEN])
             if not errors:
-                return self.async_create_entry(title="Dom Gemma", data={CONF_URL: url, CONF_TOKEN: user_input[CONF_TOKEN]})
+                # od 0.1.9 nowe wpisy domyślnie wykonują akcje tylko na encjach wystawionych do Assist;
+                # istniejące wpisy (bez klucza w opcjach) zostają przy dawnym False
+                return self.async_create_entry(title="Dom Gemma", data={CONF_URL: url, CONF_TOKEN: user_input[CONF_TOKEN]},
+                                               options={CONF_REQUIRE_EXPOSED: True, CONF_FALLBACK: True})
         return self.async_show_form(step_id="user", data_schema=USER_SCHEMA, errors=errors)
 
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

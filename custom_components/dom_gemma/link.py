@@ -14,6 +14,7 @@ from . import logic
 from .const import CONNECT_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
+_WARNED: set[str] = set()   # adresy, przed którymi już ostrzegliśmy (raz na uruchomienie HA)
 
 
 class ServerUnavailable(Exception):
@@ -26,6 +27,11 @@ class ServerLink:
         self.urls = logic.parse_urls(urls)
         self.token = token
         self.good: str | None = None   # ostatnio działający adres
+        # token idzie kolejno pod każdy adres, a http to jawny tekst - ostrzeżenie, gdy adres nie wygląda na LAN
+        if unsafe := [u for u in logic.public_http_urls(self.urls) if u not in _WARNED]:
+            _WARNED.update(unsafe)
+            _LOGGER.warning("Adres serwera DomGemma %s używa http poza siecią prywatną - token i polecenia idą "
+                            "jawnym tekstem. Użyj adresu w LAN (stałe IP z DHCP) albo https.", ", ".join(unsafe))
 
     def _headers(self, auth: bool) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"} if auth else {}
