@@ -320,10 +320,9 @@ def _call(service, ids, **extra):
 
 
 def test_ha_forces_confirmation_for_sensitive_actions():
-    # serwer może powiedzieć needs_confirmation=False - HA i tak pyta przy zamku i skrypcie
+    # serwer może powiedzieć needs_confirmation=False - HA i tak pyta przy otwieraniu zamka
     assert logic.needs_ha_confirmation(_call("lock.unlock", ["lock.zamek"]), {})
     assert logic.needs_ha_confirmation(_call("lock.open", ["lock.zamek"]), {})
-    assert logic.needs_ha_confirmation(_call("script.turn_on", ["script.zamknij_i_zgas_wszystko"]), {})
     assert logic.needs_ha_confirmation(_call("alarm_control_panel.alarm_disarm", ["alarm_control_panel.dom"]), {})
     # wrażliwa akcja w środku listy też wymusza pytanie
     mixed = _call("light.turn_on", ["light.lampka"]) + _call("lock.unlock", ["lock.zamek"])
@@ -339,6 +338,9 @@ def test_ha_does_not_force_confirmation_for_ordinary_actions():
     assert not logic.needs_ha_confirmation(_call("lock.lock", ["lock.zamek"]), {})
     assert not logic.needs_ha_confirmation(_call("light.turn_on", ["light.lampka"]), {})
     assert not logic.needs_ha_confirmation(_call("switch.turn_off", ["switch.kuchnia_l1"]), {})
+    # 0.1.10: skrypty i przyciski bez wymuszonego pytania (decyzja użytkownika - sterowanie głosem ma być szybkie)
+    assert not logic.needs_ha_confirmation(_call("script.turn_on", ["script.zamknij_i_zgas_wszystko"]), {})
+    assert not logic.needs_ha_confirmation(_call("input_button.press", ["input_button.dzwonek"]), {})
     assert not logic.needs_ha_confirmation([{"action": "get_state", "entity_id": ["lock.zamek"]}], {})
     assert not logic.needs_ha_confirmation([], {})
 
@@ -350,3 +352,26 @@ def test_public_http_urls_warns_only_outside_lan():
     assert logic.public_http_urls(lan) == []
     assert logic.public_http_urls(["http://8.8.8.8:8765", "http://moj.example.com:8765", "8.8.4.4:8765"]) == \
         ["http://8.8.8.8:8765", "http://moj.example.com:8765", "8.8.4.4:8765"]
+
+
+def _dev(ids, relay=None, bulbs=()):
+    return logic.DeviceName(frozenset(ids), "urządzenie", "urządzenie", bulbs=frozenset(bulbs), relay=relay)
+
+
+def test_restrict_devices_keeps_only_known_switch_relay_and_light_bulbs():
+    known = {"switch.kuchnia_l1", "light.zarowka_kuchnia", "light.zarowka_salon"}
+    allowed = known.__contains__
+    out = logic.restrict_devices([
+        _dev({"light.zarowka_kuchnia"}, relay="switch.kuchnia_l1"),          # poprawny relay - zostaje
+        _dev({"light.zarowka_salon"}, relay="lock.zamek"),                   # zamek jako relay - odcięty
+        _dev({"light.zarowka_salon"}, relay="switch.nie_ma_w_ha"),           # nieznany przełącznik - odcięty
+        _dev({"switch.kuchnia_l1"}, bulbs={"light.zarowka_kuchnia", "lock.zamek", "light.obca"}),
+    ], allowed)
+    assert out[0].relay == "switch.kuchnia_l1"
+    assert out[1].relay is None and out[2].relay is None
+    assert out[3].bulbs == frozenset({"light.zarowka_kuchnia"})
+
+
+def test_restrict_devices_handles_missing_package():
+    assert logic.restrict_devices(None, lambda e: True) == []
+

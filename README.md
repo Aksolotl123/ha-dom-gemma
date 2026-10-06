@@ -9,8 +9,8 @@ domu) działającego na telefonie w sieci domowej. Model zwraca akcje, a integra
 - wykonuje usługi w kontekście użytkownika, który mówi,
 - odpowiada na pytania o stan („W salonie: 21,5 °C”) bez drugiego wywołania modelu,
 - pyta o potwierdzenie przed akcjami wskazanymi przez serwer — „tak” / „nie” w tej samej rozmowie, ważne 60 s;
-  przed akcjami wrażliwymi (otwarcie zamka, uruchomienie skryptu, rozbrojenie alarmu, otwarcie bramy/garażu) pyta
-  zawsze, nawet gdy serwer potwierdzenia nie żąda,
+  przed wejściem do domu (otwarcie zamka, rozbrojenie alarmu, otwarcie bramy/garażu) pyta zawsze, nawet gdy
+  serwer potwierdzenia nie żąda; światła, przełączniki, przyciski i skrypty wykonuje od razu (0.1.10),
 - rozumie odpowiedź na dopytanie („Które światło w salonie?” → „Nad stołem”): urządzenie bierze z odpowiedzi
   i miejsca z pytania, a „włącz”/„zgaś” z pierwszego polecenia,
 - włącza żarówki zasilane przez sterowany przełącznik: po włączeniu przełącznika czeka (do 20 s), aż żarówka się
@@ -51,7 +51,10 @@ Uprawnienia użytkowników HA nie ograniczają domyślnie sterowania encjami, a 
 użytkownika — dlatego walidacja w integracji (lista usług, istnienie encji) i potwierdzenia są główną ochroną.
 Serwer powinien być dostępny tylko w sieci lokalnej.
 
-- **O potwierdzeniu decyduje HA.** Dla akcji wrażliwych (`lock.unlock`/`lock.open`, każdy `script.*`, rozbrojenie
+- **Pola `relay`/`bulbs` z serwera są zawężone (0.1.10).** Agent steruje nimi sam, bez modelu, więc przyjmuje tylko
+  `switch.*` jako przekaźnik i `light.*` jako żarówki — i tylko encje istniejące w HA (przy `require_exposed` także
+  wystawione do Assist). Zamek, brama czy alarm wskazane przez serwer w tych polach są pomijane z ostrzeżeniem w logu.
+- **O potwierdzeniu decyduje HA.** Dla akcji wrażliwych (`lock.unlock`/`lock.open`, rozbrojenie
   alarmu, otwarcie bramy/garażu — `cover` z `device_class` `gate`/`garage`) integracja pyta „tak/nie” niezależnie
   od pola `needs_confirmation` z serwera — podstawiony serwer nie otworzy zamka bez zgody (alarm i bramy są
   dziś poza listą dozwolonych usług — to zabezpieczenie na wypadek jej rozszerzenia). Zamek lub bramę

@@ -20,6 +20,7 @@ from .const import (BULB_SETTLE, BULB_STEP, BULB_WAIT, CLARIFY_TTL, CONF_FALLBAC
 from .link import ServerLink, ServerUnavailable
 
 _LOGGER = logging.getLogger(__name__)
+_WARNED: set[str] = set()   # encje z relay/bulbs, przed którymi już ostrzegliśmy (raz na uruchomienie HA)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
@@ -142,10 +143,27 @@ class DomGemmaAgent(conversation.ConversationEntity):
         try:
             status, data = await self._link.request("GET", "/v1/devices", 5)
             if status == 200 and isinstance(data, dict):
-                return logic.names_from_server(data)
+                # relay/bulbs z pakietu agent steruje sam (bez modelu) - tylko encje, które HA zna (0.1.10)
+                return logic.restrict_devices(logic.names_from_server(data), self._derived_allowed)
         except ServerUnavailable as err:
             _LOGGER.debug("Nie pobrano nazw urządzeń: %s", err)
         return None
+
+    def _derived_allowed(self, entity_id: str) -> bool:
+        """Czy encja z pól relay/bulbs pakietu serwera może być sterowana bez udziału modelu: musi istnieć w HA
+        i (przy require_exposed) być wystawiona do Assist - te same warunki, które check_actions stawia encjom
+        z akcji modelu. Sprawdzane przy pobraniu pakietu (co DEVICES_TTL), nie przy każdym poleceniu."""
+        if self.hass.states.get(entity_id) is None:
+            reason = "nie ma jej w HA"
+        elif self.entry.options.get(CONF_REQUIRE_EXPOSED, False) and not async_should_expose(
+                self.hass, conversation.DOMAIN, entity_id):
+            reason = "nie jest wystawiona do Assist"
+        else:
+            return True
+        if entity_id not in _WARNED:  # pakiet odświeżany co 10 min - ostrzegamy raz na uruchomienie HA
+            _WARNED.add(entity_id)
+            _LOGGER.warning("Pakiet serwera wskazuje encję %s, która %s - pomijam ją w relay/bulbs", entity_id, reason)
+        return False
 
     def _device_classes(self, actions: list[dict]) -> dict[str, str | None]:
         return {e: s.attributes.get("device_class") if (s := self.hass.states.get(e)) else None

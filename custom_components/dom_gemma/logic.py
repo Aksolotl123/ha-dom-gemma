@@ -23,7 +23,10 @@ ALLOWED_SERVICES: dict[str, set[str]] = {
 # serwer albo MITM na http nie może otworzyć zamka ani uruchomić skryptu bez „tak”). Część z nich nie jest dziś
 # na liście ALLOWED_SERVICES - zostają tu na wypadek jej rozszerzenia.
 SENSITIVE_SERVICES = {"lock.unlock", "lock.open"}
-SENSITIVE_DOMAINS = {"script"}                  # każdy skrypt (może robić cokolwiek)
+# 0.1.10: skrypty bez wymuszonego potwierdzenia - decyzja użytkownika: polecenia głosowe mają działać od razu,
+# a domownicy i tak mogą wszystko zrobić ręcznie. Wymuszone potwierdzenie zostaje tylko dla wejścia do domu
+# (zamek, brama/garaż, rozbrojenie alarmu).
+SENSITIVE_DOMAINS: set[str] = set()
 SENSITIVE_COVER_CLASSES = {"garage", "gate"}    # cover.open*/toggle dla bramy i garażu
 _COLOR_KEYS = {"color_name", "color_temp_kelvin"}
 ALLOWED_DATA: dict[str, set[str]] = {
@@ -388,6 +391,25 @@ def names_from_server(devices: dict) -> list[DeviceName]:
             area = d.get("area") if isinstance(d.get("area"), str) else None
             out.append(DeviceName(ids, d["name"], d.get("acc") or d["name"], str(d.get("kind") or ""), bulbs,
                                   relay, area, d.get("color") is True))
+    return out
+
+
+def restrict_devices(devices: list[DeviceName] | None, allowed) -> list[DeviceName]:
+    """Odetnij z pakietu serwera encje pochodne (relay, bulbs), których HA nie zna albo których nie wolno sterować.
+
+    Pola relay/bulbs omijają check_actions - agent woła na nich switch.*/light.* sam, bez modelu - więc podstawiony
+    serwer (albo MITM na http) mógłby przez „relay” włączyć dowolną encję. Zostają tylko: relay w domenie switch,
+    żarówki (bulbs i sama żarówka z relay) w domenie light, i tylko te, dla których allowed(entity_id) -> True
+    (agent: encja istnieje w HA, a przy require_exposed - jest wystawiona do Assist). Zamek, brama jako cover,
+    alarm itp. nigdy nie przejdą tą drogą (te akcje idą tylko przez model i check_actions/potwierdzenie)."""
+    out = []
+    for d in devices or []:
+        relay = d.relay
+        if relay and not (relay.startswith("switch.") and allowed(relay) and len(d.ids) == 1
+                          and all(e.startswith("light.") and allowed(e) for e in d.ids)):
+            relay = None  # żarówka zostaje zwykłym światłem (light.* przez model, z walidacją check_actions)
+        bulbs = frozenset(b for b in d.bulbs if b.startswith("light.") and allowed(b))
+        out.append(DeviceName(d.ids, d.nom, d.acc, d.kind, bulbs, relay, d.area, d.color))
     return out
 
 
