@@ -15,7 +15,7 @@ from homeassistant.helpers import intent
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import logic
-from .const import (BULB_SETTLE, BULB_STEP, BULB_WAIT, CLARIFY_TTL, CONF_FALLBACK, CONF_REQUIRE_EXPOSED,
+from .const import (BULB_SETTLE, BULB_STEP, BULB_WAIT, CLARIFY_TTL, CONF_FALLBACK, CONF_FALLBACK_AGENT, CONF_REQUIRE_EXPOSED,
                     CONFIRM_TTL, DEFAULT_TIMEOUT, DEVICES_TTL, DOMAIN)
 from .link import ServerLink, ServerUnavailable
 
@@ -86,6 +86,8 @@ class DomGemmaAgent(conversation.ConversationEntity):
                 self._devices_at = time.monotonic()
         except ServerUnavailable as err:
             _LOGGER.warning("DomGemma Server niedostępny (%s)", err)
+            if (forwarded := await self._second_line(user_input, conv_id, user_input.text, "server")) is not None:
+                return forwarded
             if self.entry.options.get(CONF_FALLBACK, True):
                 return await conversation.async_converse(
                     self.hass, user_input.text, conv_id, user_input.context, language=user_input.language,
@@ -102,6 +104,10 @@ class DomGemmaAgent(conversation.ConversationEntity):
         # przed potwierdzeniem: „dim płyta_indukcyjna” ma paść tu, a nie po „tak”
         errors += logic.check_actions(actions, set(self.hass.states.async_entity_ids()), self._exposed(actions),
                                       logic.dimmable_relays(self._devices), logic.color_entities(self._devices))
+        # 0.1.11: model nie dał rady (nie zna urządzenia / odpowiedź odrzucona) -> agent zapasowy, jeśli ustawiony
+        if (reason := logic.second_line_reason(result, errors)) and (
+                forwarded := await self._second_line(user_input, conv_id, text, reason)) is not None:
+            return forwarded
         if errors:
             # treść wypowiedzi i komendy serwera tylko w DEBUG (log INFO trafia do zgłoszeń/diagnostyki)
             _LOGGER.info("Odrzucono polecenie z Assist (%d błąd/błędy walidacji)", len(errors))
@@ -128,6 +134,23 @@ class DomGemmaAgent(conversation.ConversationEntity):
         return self._reply(user_input, chat_log, response, speech)
 
     # ------------------------------------------------------------------ pomocnicze
+    async def _second_line(self, user_input: conversation.ConversationInput, conv_id: str, text: str,
+                           reason: str) -> conversation.ConversationResult | None:
+        """Zdanie do agenta zapasowego (opcja fallback_agent, np. Claude z integracji Anthropic). None = brak agenta
+        albo jego błąd - wtedy zostaje zwykła odpowiedź Dom Gemma. Ten agent steruje domem sam (przez Assist),
+        więc nasze potwierdzenia go nie obejmują - patrz README, sekcja Bezpieczeństwo."""
+        agent = self.entry.options.get(CONF_FALLBACK_AGENT)
+        if not agent or agent in (self.entity_id, self.entry.entry_id):  # nie do samego siebie (pętla)
+            return None
+        _LOGGER.info("Przekazuję zdanie agentowi zapasowemu %s (powód: %s)", agent, reason)
+        try:
+            return await conversation.async_converse(
+                self.hass, text, conv_id, user_input.context, language=user_input.language,
+                agent_id=agent, device_id=user_input.device_id, satellite_id=user_input.satellite_id)
+        except HomeAssistantError as err:
+            _LOGGER.warning("Agent zapasowy %s nie odpowiedział: %s", agent, err)
+            return None
+
     @property
     def _link(self) -> ServerLink:
         return self.entry.runtime_data

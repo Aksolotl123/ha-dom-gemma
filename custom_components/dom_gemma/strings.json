@@ -32,7 +32,11 @@
       "init": {
         "data": {
           "require_exposed": "Wykonuj tylko na encjach wystawionych do Assist",
-          "fallback_to_default": "Gdy serwer nie odpowiada, przekaż zdanie wbudowanemu agentowi HA"
+          "fallback_to_default": "Gdy serwer nie odpowiada, przekaż zdanie wbudowanemu agentowi HA",
+          "fallback_agent": "Agent zapasowy (druga linia, np. Claude)"
+        },
+        "data_description": {
+          "fallback_agent": "Agent zapasowy dostaje zdanie, gdy Dom Gemma nie zna urządzenia („Nie mam takiego urządzenia”), gdy odpowiedź modelu zostanie odrzucona przy sprawdzaniu albo gdy serwer nie odpowiada. Odmowy i dopytania modelu zostają bez zmian. Puste pole = bez agenta zapasowego."
         }
       }
     }

@@ -375,3 +375,29 @@ def test_restrict_devices_keeps_only_known_switch_relay_and_light_bulbs():
 def test_restrict_devices_handles_missing_package():
     assert logic.restrict_devices(None, lambda e: True) == []
 
+
+
+@pytest.mark.parametrize("result,errors,reason", [
+    ({"commands": "no dev", "valid": True,
+      "actions": [{"action": "unsupported", "reply": "Nie mam takiego urządzenia."}]}, [], "no_dev"),
+    ({"valid": True, "actions": [{"action": "unsupported", "reply": "Nie mam takiego urządzenia."}]}, [], "no_dev"),
+    ({"commands": "off lampka_sypialni", "valid": False, "actions": []}, ["nieznany uchwyt"], "rejected"),
+    ({"commands": "on swiatlo_kuchni", "valid": True, "actions": [{"action": "call_service"}]},
+     ["light.x: encja nie jest wystawiona do Assist"], "rejected"),
+    # poprawne odmowy i dopytanie zostają przy Dom Gemma
+    ({"commands": "no cant", "valid": True, "actions": [{"action": "unsupported", "reply": "Nie mogę tego zrobić."}]},
+     [], None),
+    ({"commands": "no noop", "valid": True, "actions": [{"action": "unsupported", "reply": "Dobrze, nic nie robię."}]},
+     [], None),
+    ({"commands": "no chat", "valid": True, "actions": [{"action": "unsupported", "reply": "Mogę tylko sterować domem."}]},
+     [], None),
+    ({"commands": "ask Które światło?", "valid": True, "actions": [{"action": "clarify", "question": "Które światło?"}]},
+     [], None),
+    ({"commands": "on swiatlo_kuchni", "valid": True, "actions": [{"action": "call_service"}]}, [], None),
+    # „no dev” razem z wykonaną akcją - część polecenia działa, nie przekazujemy
+    ({"commands": "on swiatlo_kuchni; no dev", "valid": True,
+      "actions": [{"action": "call_service"}, {"action": "unsupported", "reply": "Nie mam takiego urządzenia."}]},
+     [], None),
+])
+def test_second_line_reason(result, errors, reason):
+    assert logic.second_line_reason(result, errors) == reason

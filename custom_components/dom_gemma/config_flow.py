@@ -8,10 +8,11 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
-from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
+from homeassistant.helpers.selector import (ConversationAgentSelector, ConversationAgentSelectorConfig, TextSelector,
+                                            TextSelectorConfig, TextSelectorType)
 
 from . import logic
-from .const import CONF_FALLBACK, CONF_REQUIRE_EXPOSED, CONF_TOKEN, CONF_URL, DOMAIN
+from .const import CONF_FALLBACK, CONF_FALLBACK_AGENT, CONF_REQUIRE_EXPOSED, CONF_TOKEN, CONF_URL, DOMAIN
 from .link import ServerLink, ServerUnavailable
 
 USER_SCHEMA = vol.Schema({
@@ -65,6 +66,9 @@ class DomGemmaOptionsFlow(OptionsFlow):
         return self.async_show_form(step_id="init", data_schema=vol.Schema({
             vol.Optional(CONF_REQUIRE_EXPOSED, default=o.get(CONF_REQUIRE_EXPOSED, False)): bool,
             vol.Optional(CONF_FALLBACK, default=o.get(CONF_FALLBACK, True)): bool,
+            # 0.1.11: druga linia (np. Claude) - suggested_value zamiast default, żeby dało się pole wyczyścić
+            vol.Optional(CONF_FALLBACK_AGENT, description={"suggested_value": o.get(CONF_FALLBACK_AGENT)}):
+                ConversationAgentSelector(ConversationAgentSelectorConfig(language="pl")),
         }))
 
 

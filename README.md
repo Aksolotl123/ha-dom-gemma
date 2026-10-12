@@ -44,6 +44,15 @@ w konfiguracji.
   dotychczasowe ustawienie (wyłączone, jeśli nie było zmieniane) — warto je włączyć w opcjach i wystawić do Assist
   tylko encje, którymi model ma sterować.
 - **Gdy serwer nie odpowiada, przekaż zdanie wbudowanemu agentowi HA** — domyślnie włączone.
+- **Agent zapasowy (druga linia, np. Claude)** — od 0.1.11, domyślnie pusty. Dowolny agent rozmowy z HA, np. Claude
+  z wbudowanej integracji **Anthropic** (klucz API podajesz tylko tam, ta integracja go nie widzi). Dostaje zdanie,
+  gdy Dom Gemma nie zna urządzenia („Nie mam takiego urządzenia”), gdy odpowiedź modelu zostanie odrzucona przy
+  sprawdzaniu albo gdy serwer nie odpowiada (wtedy zamiast wbudowanego agenta HA). Odmowy („Nie mogę tego zrobić”,
+  „Dobrze, nic nie robię”) i dopytania („Które światło?”) zostają bez zmian — to poprawne odpowiedzi.
+
+  Przykładowa konfiguracja: Ustawienia → Urządzenia i usługi → Dodaj integrację → **Anthropic** → klucz API; w opcjach
+  agenta model np. `claude-haiku-5-5` (szybki i tani), sterowanie domem przez **Assist**; potem w opcjach Dom Gemma
+  wybierz tego agenta jako zapasowego. Zdania przekazane dalej są wysyłane do usługi zewnętrznej (Anthropic).
 
 ## Bezpieczeństwo
 
@@ -67,3 +76,7 @@ Serwer powinien być dostępny tylko w sieci lokalnej.
   serwer działa za odwrotnym proxy z certyfikatem — użyj adresu `https://`. Dla adresu `http://` spoza sieci
   prywatnej integracja zapisuje w logu ostrzeżenie (raz).
 - Treść wypowiedzi odrzuconych przez walidację trafia do logu tylko na poziomie DEBUG.
+- **Agent zapasowy steruje domem sam** (np. Claude przez Assist) — walidacja i potwierdzenia tej integracji go nie
+  obejmują. Widzi i może sterować wszystkimi encjami wystawionymi do Assist, także zamkiem, jeśli jest wystawiony.
+  Jeśli używasz agenta zapasowego, nie wystawiaj do Assist encji, których nie chcesz oddawać modelowi w chmurze
+  (zamek, brama, alarm), albo zostaw pole agenta zapasowego puste.

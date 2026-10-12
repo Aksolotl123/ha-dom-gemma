@@ -192,6 +192,25 @@ def needs_ha_confirmation(actions: list[dict], device_classes: dict[str, str | N
     return False
 
 
+REPLY_NO_DEVICE = "Nie mam takiego urządzenia."   # serwer: komenda „no dev” (Compact.REPLIES)
+
+
+def second_line_reason(result: dict, errors: list[str]) -> str | None:
+    """0.1.11: czy zdanie przekazać agentowi zapasowemu (np. Claude przez integrację Anthropic) i dlaczego.
+    Tylko gdy model nie dał rady: odrzucona odpowiedź (walidacja serwera lub HA) albo „nie mam takiego
+    urządzenia”. Świadome odmowy (no cant/noop/chat/color/sensor) i dopytanie („Które światło?”) zostają -
+    to poprawne odpowiedzi, a dopytanie przy niejasnym poleceniu chroni przed wykonaniem złej akcji."""
+    if errors:
+        return "rejected"
+    commands = str(result.get("commands") or "").strip().lower()
+    if re.fullmatch(r"no\s+dev\.?", commands):
+        return "no_dev"
+    actions = result.get("actions") or []
+    if actions and all(a.get("action") == "unsupported" and a.get("reply") == REPLY_NO_DEVICE for a in actions):
+        return "no_dev"
+    return None
+
+
 def dimmable_relays(devices: list[DeviceName] | None) -> frozenset[str]:
     """Przełączniki, za którymi stoją żarówki - tylko na nich jasność ma sens (i jest dozwolona)."""
     return frozenset(e for d in devices or [] if d.bulbs for e in d.ids)

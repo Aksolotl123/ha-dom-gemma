@@ -32,7 +32,11 @@
       "init": {
         "data": {
           "require_exposed": "Wykonuj tylko na encjach wystawionych do Assist",
-          "fallback_to_default": "Gdy serwer nie odpowiada, przekaż zdanie wbudowanemu agentowi HA"
+          "fallback_to_default": "Gdy serwer nie odpowiada, przekaż zdanie wbudowanemu agentowi HA",
+          "fallback_agent": "Fallback agent (second line, e.g. Claude)"
+        },
+        "data_description": {
+          "fallback_agent": "The fallback agent receives the sentence when Dom Gemma does not know the device, when the model's answer is rejected by validation, or when the server does not respond. The model's refusals and clarifying questions are kept. Empty = no fallback agent."
         }
       }
     }

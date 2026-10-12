@@ -5,6 +5,9 @@ CONF_URL = "url"
 CONF_TOKEN = "token"
 CONF_REQUIRE_EXPOSED = "require_exposed"
 CONF_FALLBACK = "fallback_to_default"
+# 0.1.11: agent zapasowy (druga linia, np. Claude z integracji Anthropic) - id agenta rozmowy z HA, bez klucza w tej
+# integracji. Puste = brak.
+CONF_FALLBACK_AGENT = "fallback_agent"
 
 DEFAULT_TIMEOUT = 15  # s; odpowiedź serwera ~1-3.6 s, ale gdy przygotowuje rozmowę, czeka do ~10 s
 CONFIRM_TTL = 60      # s; po tym czasie "tak" nie wykona już oczekującej akcji
