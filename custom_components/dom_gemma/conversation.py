@@ -108,6 +108,7 @@ class DomGemmaAgent(conversation.ConversationEntity):
         # -> agent zapasowy, jeśli ustawiony
         # (przy odpowiedzi na dopytanie agent dostaje całość: pierwsze polecenie + odpowiedź, nie sam fragment)
         full = f"{clarify[1].strip().rstrip('.!?')}. {user_input.text}" if clarify else user_input.text
+        errors += logic.script_verb_errors(actions, full)   # 0.1.12: „Zgadź wszystkie” nie włącza wszystkich
         if (reason := logic.second_line_reason(result, errors, full)) and (
                 forwarded := await self._second_line(user_input, conv_id, full, reason)) is not None:
             return forwarded

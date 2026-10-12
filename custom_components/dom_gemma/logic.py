@@ -200,6 +200,35 @@ def has_power_verb(text: str) -> bool:
     return any(w.startswith(_OFF_WORDS + _ON_WORDS) for w in _plain(text).split())
 
 
+def script_direction(entity_id: str) -> str | None:
+    """0.1.12: kierunek skryptu „od świateł” z jego id: script.wlacz_wszystkie_swiatla -> 'turn_on',
+    script.zgas_wszystkie_swiatla -> 'turn_off'. None, gdy w nazwie nie ma włącz/zgaś, są oba albo jest inne
+    polecenie (script.zamknij_i_zgas_wszystko uruchamia też „Wychodzę z domu” - tego nie sprawdzamy)."""
+    domain, _, name = entity_id.partition(".")
+    if domain != "script":
+        return None
+    parts = name.split("_")
+    other = tuple(w for w in _COMMAND_WORDS if w not in _OFF_WORDS + _ON_WORDS)
+    if any(p.startswith(other) for p in parts):
+        return None
+    return power_direction(" ".join(parts))
+
+
+def script_verb_errors(actions: list[dict], text: str) -> list[str]:
+    """0.1.12: skrypt włączający/gaszący światła wykonujemy tylko, gdy zdanie ma ten sam czasownik.
+    v9 uruchamiała „włącz wszystkie” dla „Zgadź wszystkie światła.” (przekręcone „zgaś”) i „Wszystkie światło.”
+    - taka odpowiedź jest odrzucana (a z agentem zapasowym trafia do niego)."""
+    direction = power_direction(text)
+    errors = []
+    for a in actions:
+        if a.get("action") != "call_service" or a.get("service") != "script.turn_on":
+            continue
+        for e in a.get("entity_id") or []:
+            if (want := script_direction(str(e))) and want != direction:
+                errors.append(f"{e}: w poleceniu brak „{'włącz' if want == 'turn_on' else 'zgaś'}”")
+    return errors
+
+
 def second_line_reason(result: dict, errors: list[str], text: str = "") -> str | None:
     """0.1.11: czy zdanie przekazać agentowi zapasowemu (np. Claude przez integrację Anthropic) i dlaczego.
     Gdy model nie dał rady: odrzucona odpowiedź (walidacja serwera lub HA), „nie mam takiego urządzenia” albo

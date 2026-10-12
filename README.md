@@ -11,6 +11,10 @@ domu) działającego na telefonie w sieci domowej. Model zwraca akcje, a integra
 - pyta o potwierdzenie przed akcjami wskazanymi przez serwer — „tak” / „nie” w tej samej rozmowie, ważne 60 s;
   przed wejściem do domu (otwarcie zamka, rozbrojenie alarmu, otwarcie bramy/garażu) pyta zawsze, nawet gdy
   serwer potwierdzenia nie żąda; światła, przełączniki, przyciski i skrypty wykonuje od razu (0.1.10),
+- skrypt, który w nazwie ma włącz/zapal albo zgaś/wyłącz (np. `script.wlacz_wszystkie_swiatla`), uruchamia tylko
+  wtedy, gdy w zdaniu jest ten sam czasownik — „Zgadź wszystkie światła” (przekręcone „zgaś”) albo samo „Wszystkie
+  światło” nie włączą całego domu; taka odpowiedź modelu jest odrzucana i trafia do agenta zapasowego (0.1.12).
+  Skrypty z innym poleceniem w nazwie (np. `script.zamknij_i_zgas_wszystko`) nie są tak sprawdzane,
 - rozumie odpowiedź na dopytanie („Które światło w salonie?” → „Nad stołem”): urządzenie bierze z odpowiedzi
   i miejsca z pytania, a „włącz”/„zgaś” z pierwszego polecenia,
 - włącza żarówki zasilane przez sterowany przełącznik: po włączeniu przełącznika czeka (do 20 s), aż żarówka się

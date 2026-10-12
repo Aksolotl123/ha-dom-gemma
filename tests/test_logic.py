@@ -415,3 +415,38 @@ ASK = {"commands": "ask Które światło?", "valid": True, "actions": [{"action"
 ])
 def test_second_line_reason_ask(text, reason):
     assert logic.second_line_reason(ASK, [], text) == reason
+
+
+@pytest.mark.parametrize("entity_id,direction", [
+    ("script.wlacz_wszystkie_swiatla", "turn_on"), ("script.zgas_wszystkie_swiatla", "turn_off"),
+    ("script.wylacz_oswietlenie", "turn_off"), ("script.zapal_lampki", "turn_on"),
+    ("script.zamknij_i_zgas_wszystko", None),   # inne polecenie w nazwie - nie sprawdzamy
+    ("script.sypanie_chrupkow_kotow", None), ("script.wlacz_i_zgas", None), ("light.wlacz_cos", None),
+])
+def test_script_direction(entity_id, direction):
+    assert logic.script_direction(entity_id) == direction
+
+
+def _run(*scripts):
+    return [{"action": "call_service", "service": "script.turn_on", "entity_id": list(scripts)}]
+
+
+@pytest.mark.parametrize("actions,text,bad", [
+    # błędy v9 z dziennika: przekręcone „zgaś” i samo „Wszystkie światło.”
+    (_run("script.wlacz_wszystkie_swiatla"), "Zgadź wszystkie światła.", 1),
+    (_run("script.wlacz_wszystkie_swiatla"), "Wszystkie światło.", 1),
+    (_run("script.zgas_wszystkie_swiatla"), "Włącz wszystkie światła.", 1),
+    (_run("script.zgas_wszystkie_swiatla"), "Zgać wszystkie lampy w domu", 1),   # literówka - wolimy dopytać/Claude
+    # zgodny czasownik (dowolna odmiana / synonim)
+    (_run("script.wlacz_wszystkie_swiatla"), "Włącz wszystkie światła.", 0),
+    (_run("script.wlacz_wszystkie_swiatla"), "zapal wszystko", 0),
+    (_run("script.zgas_wszystkie_swiatla"), "wyłącz całe oświetlenie", 0),
+    (_run("script.zgas_wszystkie_swiatla"), "Pogaś wszystko w domu", 0),
+    # skrypty bez kierunku w nazwie i inne akcje - bez zmian
+    (_run("script.zamknij_i_zgas_wszystko"), "Wychodzę z domu", 0),
+    (_run("script.sypanie_chrupkow_kotow"), "Daj kotom jeść", 0),
+    ([{"action": "call_service", "service": "light.turn_on", "entity_id": ["light.wlacz_x"]}], "Lampa.", 0),
+    ([{"action": "clarify", "question": "Które światło?"}], "Wszystkie światło.", 0),
+])
+def test_script_verb_errors(actions, text, bad):
+    assert len(logic.script_verb_errors(actions, text)) == bad
