@@ -401,3 +401,17 @@ def test_restrict_devices_handles_missing_package():
 ])
 def test_second_line_reason(result, errors, reason):
     assert logic.second_line_reason(result, errors) == reason
+
+
+ASK = {"commands": "ask Które światło?", "valid": True, "actions": [{"action": "clarify", "question": "Które światło?"}]}
+
+
+@pytest.mark.parametrize("text,reason", [
+    # dopytanie mimo czasownika -> druga linia
+    ("Włącz światło.", "ask"), ("zgaś to światło", "ask"), ("Wyłącz lampę", "ask"), ("zapal coś w salonie", "ask"),
+    ("Pogaś światła", "ask"),
+    # bez czasownika dopytanie zostaje (także przekręcone „Zgadź”)
+    ("Wszystkie światło.", None), ("Zgadź wszystkie światła.", None), ("ustaw na 30%", None), ("", None),
+])
+def test_second_line_reason_ask(text, reason):
+    assert logic.second_line_reason(ASK, [], text) == reason

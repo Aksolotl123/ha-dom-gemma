@@ -36,7 +36,7 @@
           "fallback_agent": "Fallback agent (second line, e.g. Claude)"
         },
         "data_description": {
-          "fallback_agent": "The fallback agent receives the sentence when Dom Gemma does not know the device, when the model's answer is rejected by validation, or when the server does not respond. The model's refusals and clarifying questions are kept. Empty = no fallback agent."
+          "fallback_agent": "The fallback agent receives the sentence when Dom Gemma does not know the device, when the model's answer is rejected by validation, when the model asks a clarifying question although the sentence contains an on/off verb (włącz/zapal/wyłącz/zgaś), or when the server does not respond. Other clarifying questions and the model's refusals are kept. Empty = no fallback agent."
         }
       }
     }

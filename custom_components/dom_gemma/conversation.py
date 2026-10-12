@@ -104,9 +104,12 @@ class DomGemmaAgent(conversation.ConversationEntity):
         # przed potwierdzeniem: „dim płyta_indukcyjna” ma paść tu, a nie po „tak”
         errors += logic.check_actions(actions, set(self.hass.states.async_entity_ids()), self._exposed(actions),
                                       logic.dimmable_relays(self._devices), logic.color_entities(self._devices))
-        # 0.1.11: model nie dał rady (nie zna urządzenia / odpowiedź odrzucona) -> agent zapasowy, jeśli ustawiony
-        if (reason := logic.second_line_reason(result, errors)) and (
-                forwarded := await self._second_line(user_input, conv_id, text, reason)) is not None:
+        # 0.1.11: model nie dał rady (nie zna urządzenia / odpowiedź odrzucona / dopytuje mimo „włącz”, „zgaś”)
+        # -> agent zapasowy, jeśli ustawiony
+        # (przy odpowiedzi na dopytanie agent dostaje całość: pierwsze polecenie + odpowiedź, nie sam fragment)
+        full = f"{clarify[1].strip().rstrip('.!?')}. {user_input.text}" if clarify else user_input.text
+        if (reason := logic.second_line_reason(result, errors, full)) and (
+                forwarded := await self._second_line(user_input, conv_id, full, reason)) is not None:
             return forwarded
         if errors:
             # treść wypowiedzi i komendy serwera tylko w DEBUG (log INFO trafia do zgłoszeń/diagnostyki)

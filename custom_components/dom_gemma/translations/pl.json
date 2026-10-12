@@ -36,7 +36,7 @@
           "fallback_agent": "Agent zapasowy (druga linia, np. Claude)"
         },
         "data_description": {
-          "fallback_agent": "Agent zapasowy dostaje zdanie, gdy Dom Gemma nie zna urządzenia („Nie mam takiego urządzenia”), gdy odpowiedź modelu zostanie odrzucona przy sprawdzaniu albo gdy serwer nie odpowiada. Odmowy i dopytania modelu zostają bez zmian. Puste pole = bez agenta zapasowego."
+          "fallback_agent": "Agent zapasowy dostaje zdanie, gdy Dom Gemma nie zna urządzenia („Nie mam takiego urządzenia”), gdy odpowiedź modelu zostanie odrzucona przy sprawdzaniu, gdy model dopytuje mimo słowa włącz/zapal/wyłącz/zgaś w zdaniu albo gdy serwer nie odpowiada. Dopytania bez takiego słowa i odmowy modelu zostają bez zmian. Puste pole = bez agenta zapasowego."
         }
       }
     }

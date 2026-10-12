@@ -195,17 +195,25 @@ def needs_ha_confirmation(actions: list[dict], device_classes: dict[str, str | N
 REPLY_NO_DEVICE = "Nie mam takiego urządzenia."   # serwer: komenda „no dev” (Compact.REPLIES)
 
 
-def second_line_reason(result: dict, errors: list[str]) -> str | None:
+def has_power_verb(text: str) -> bool:
+    """Czy w zdaniu jest czasownik włącz/zapal/wyłącz/zgaś (w dowolnej odmianie)."""
+    return any(w.startswith(_OFF_WORDS + _ON_WORDS) for w in _plain(text).split())
+
+
+def second_line_reason(result: dict, errors: list[str], text: str = "") -> str | None:
     """0.1.11: czy zdanie przekazać agentowi zapasowemu (np. Claude przez integrację Anthropic) i dlaczego.
-    Tylko gdy model nie dał rady: odrzucona odpowiedź (walidacja serwera lub HA) albo „nie mam takiego
-    urządzenia”. Świadome odmowy (no cant/noop/chat/color/sensor) i dopytanie („Które światło?”) zostają -
-    to poprawne odpowiedzi, a dopytanie przy niejasnym poleceniu chroni przed wykonaniem złej akcji."""
+    Gdy model nie dał rady: odrzucona odpowiedź (walidacja serwera lub HA), „nie mam takiego urządzenia” albo
+    dopytanie mimo wyraźnego polecenia (zgaś/zapal/włącz/wyłącz w zdaniu). Bez takiego czasownika dopytanie
+    zostaje (decyzja użytkownika 12.10: „Wszystkie światło.” ma dopytać, nie wykonać). Świadome odmowy
+    (no cant/noop/chat/color/sensor) też zostają - to poprawne odpowiedzi."""
     if errors:
         return "rejected"
+    actions = result.get("actions") or []
+    if actions and actions[0].get("action") == "clarify" and has_power_verb(text):
+        return "ask"
     commands = str(result.get("commands") or "").strip().lower()
     if re.fullmatch(r"no\s+dev\.?", commands):
         return "no_dev"
-    actions = result.get("actions") or []
     if actions and all(a.get("action") == "unsupported" and a.get("reply") == REPLY_NO_DEVICE for a in actions):
         return "no_dev"
     return None

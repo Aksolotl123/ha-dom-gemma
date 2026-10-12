@@ -47,8 +47,9 @@ w konfiguracji.
 - **Agent zapasowy (druga linia, np. Claude)** — od 0.1.11, domyślnie pusty. Dowolny agent rozmowy z HA, np. Claude
   z wbudowanej integracji **Anthropic** (klucz API podajesz tylko tam, ta integracja go nie widzi). Dostaje zdanie,
   gdy Dom Gemma nie zna urządzenia („Nie mam takiego urządzenia”), gdy odpowiedź modelu zostanie odrzucona przy
-  sprawdzaniu albo gdy serwer nie odpowiada (wtedy zamiast wbudowanego agenta HA). Odmowy („Nie mogę tego zrobić”,
-  „Dobrze, nic nie robię”) i dopytania („Które światło?”) zostają bez zmian — to poprawne odpowiedzi.
+  sprawdzaniu, gdy dopytuje („Które światło?”) mimo wyraźnego polecenia ze słowem włącz/zapal/wyłącz/zgaś, albo gdy
+  serwer nie odpowiada (wtedy zamiast wbudowanego agenta HA). Dopytanie bez takiego słowa („Wszystkie światło.”) i
+  odmowy („Nie mogę tego zrobić”, „Dobrze, nic nie robię”) zostają bez zmian — to poprawne odpowiedzi.
 
   Przykładowa konfiguracja: Ustawienia → Urządzenia i usługi → Dodaj integrację → **Anthropic** → klucz API; w opcjach
   agenta model np. `claude-haiku-5-5` (szybki i tani), sterowanie domem przez **Assist**; potem w opcjach Dom Gemma
