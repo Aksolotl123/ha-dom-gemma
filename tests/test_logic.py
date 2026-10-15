@@ -450,3 +450,14 @@ def _run(*scripts):
 ])
 def test_script_verb_errors(actions, text, bad):
     assert len(logic.script_verb_errors(actions, text)) == bad
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Dodaj mleko do listy zakupów.", True), ("wrzuć chleb na listę", True), ("Co jest na liście zakupów?", True),
+    ("Usuń masło z listy.", True), ("Trzeba kupić jajka.", True), ("Kup mleko", True), ("Dopisz ser do zakupów", True),
+    ("Co mam dokupić?", True), ("Lista zakupowa", True),
+    ("Włącz listwę LED w salonie.", False), ("Zgaś światło w kuchni.", False), ("Wszystkie światło.", False),
+    ("Skup się", False), ("", False),
+])
+def test_is_list_command(text, expected):
+    assert logic.is_list_command(text) is expected

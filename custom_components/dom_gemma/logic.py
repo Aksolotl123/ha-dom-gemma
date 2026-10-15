@@ -229,6 +229,18 @@ def script_verb_errors(actions: list[dict], text: str) -> list[str]:
     return errors
 
 
+# 0.1.13: lista zakupów/zadań (np. Google Keep jako encja todo) - słowa po _plain (bez „listwa” LED)
+_LIST_WORDS = {"lista", "listy", "liscie", "liste", "list", "listach", "listami"}
+_SHOP_PREFIXES = ("zakup", "kupi", "dokupi")
+
+
+def is_list_command(text: str) -> bool:
+    """0.1.13: zdanie o liście (dodaj/wrzuć/usuń/co jest na liście, „trzeba kupić mleko”) - idzie od razu do agenta
+    HA, a gdy ten nie zrozumie - do agenta zapasowego; model o listach nic nie wie."""
+    words = _plain(text).split()
+    return any(w in _LIST_WORDS or w == "kup" or w.startswith(_SHOP_PREFIXES) for w in words)
+
+
 def second_line_reason(result: dict, errors: list[str], text: str = "") -> str | None:
     """0.1.11: czy zdanie przekazać agentowi zapasowemu (np. Claude przez integrację Anthropic) i dlaczego.
     Gdy model nie dał rady: odrzucona odpowiedź (walidacja serwera lub HA), „nie mam takiego urządzenia” albo

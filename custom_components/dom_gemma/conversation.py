@@ -66,6 +66,11 @@ class DomGemmaAgent(conversation.ConversationEntity):
                 return self._reply(user_input, chat_log, response, "Dobrze, anulowałem.")
             # inne zdanie = nowe polecenie; oczekująca akcja przepada
 
+        # 0.1.13: lista zakupów/zadań - bez modelu (nie zna list): agent HA, a gdy nie zrozumie - agent zapasowy
+        if logic.is_list_command(user_input.text):
+            self._clarify.pop(conv_id, None)
+            return await self._list_command(user_input, chat_log, response)
+
         # odpowiedź na „Które światło w salonie?”: urządzenie z odpowiedzi + miejsca, kierunek z pierwszego polecenia
         clarify = self._clarify.pop(conv_id, None)
         if clarify and (time.monotonic() - clarify[0] >= CLARIFY_TTL or logic.is_new_command(user_input.text)):
@@ -154,6 +159,30 @@ class DomGemmaAgent(conversation.ConversationEntity):
         except HomeAssistantError as err:
             _LOGGER.warning("Agent zapasowy %s nie odpowiedział: %s", agent, err)
             return None
+
+    async def _list_command(self, user_input: conversation.ConversationInput, chat_log: conversation.ChatLog,
+                            response: intent.IntentResponse) -> conversation.ConversationResult:
+        """0.1.13: „dodaj mleko do listy zakupów” itp. - najpierw wbudowany agent HA (intencje list: HassListAddItem,
+        HassListCompleteItem...), przy błędzie lub braku dopasowania - agent zapasowy (np. Claude), który przez Assist
+        też widzi encje todo. Lista musi być encją todo wystawioną do Assist (np. z integracji Google Keep Sync)."""
+        conv_id = chat_log.conversation_id
+        result = None
+        try:
+            result = await conversation.async_converse(
+                self.hass, user_input.text, conv_id, user_input.context, language=user_input.language,
+                agent_id=conversation.HOME_ASSISTANT_AGENT, device_id=user_input.device_id,
+                satellite_id=user_input.satellite_id)
+            if result.response.response_type != intent.IntentResponseType.ERROR:
+                return result
+        except HomeAssistantError as err:
+            _LOGGER.warning("Agent HA nie obsłużył polecenia listy: %s", err)
+        if (forwarded := await self._second_line(user_input, conv_id, user_input.text, "list")) is not None:
+            return forwarded
+        if result is not None:
+            return result
+        msg = "Nie udało się obsłużyć listy."
+        response.async_set_error(intent.IntentResponseErrorCode.UNKNOWN, msg)
+        return self._finish(user_input, chat_log, response, msg)
 
     @property
     def _link(self) -> ServerLink:

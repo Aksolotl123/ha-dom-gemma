@@ -26,6 +26,9 @@ domu) działającego na telefonie w sieci domowej. Model zwraca akcje, a integra
 - steruje pojedynczą żarówką za przełącznikiem (pole `relay` w liście urządzeń): „włącz żarówkę 1” włącza
   przełącznik, zapala tę żarówkę i gasi pozostałe w pomieszczeniu; po zgaszeniu ostatniej świecącej żarówki
   wyłącza też przełącznik,
+- polecenia list („dodaj mleko do listy zakupów”, „wrzuć chleb na listę”, „co jest na liście?”, „trzeba kupić
+  jajka”) omijają model: najpierw obsługuje je wbudowany agent HA, a gdy go nie zrozumie — agent zapasowy (np. Claude).
+  Lista to dowolna encja `todo` wystawiona do Assist, np. z integracji Google Keep Sync (lista zakupów w Keep) (0.1.13),
 - gdy serwer nie odpowiada, przekazuje zdanie wbudowanemu agentowi HA (opcja); czujnik „Serwer” (łączność,
   sprawdzany co 30 s) pokazuje, czy serwer działa — można na nim oprzeć powiadomienie.
 
@@ -52,7 +55,8 @@ w konfiguracji.
   z wbudowanej integracji **Anthropic** (klucz API podajesz tylko tam, ta integracja go nie widzi). Dostaje zdanie,
   gdy Dom Gemma nie zna urządzenia („Nie mam takiego urządzenia”), gdy odpowiedź modelu zostanie odrzucona przy
   sprawdzaniu, gdy dopytuje („Które światło?”) mimo wyraźnego polecenia ze słowem włącz/zapal/wyłącz/zgaś, albo gdy
-  serwer nie odpowiada (wtedy zamiast wbudowanego agenta HA). Dopytanie bez takiego słowa („Wszystkie światło.”) i
+  serwer nie odpowiada (wtedy zamiast wbudowanego agenta HA). Dostaje też polecenia list, których nie zrozumie
+  wbudowany agent HA (0.1.13). Dopytanie bez takiego słowa („Wszystkie światło.”) i
   odmowy („Nie mogę tego zrobić”, „Dobrze, nic nie robię”) zostają bez zmian — to poprawne odpowiedzi.
 
   Przykładowa konfiguracja: Ustawienia → Urządzenia i usługi → Dodaj integrację → **Anthropic** → klucz API; w opcjach
