@@ -214,11 +214,50 @@ def script_direction(entity_id: str) -> str | None:
     return power_direction(" ".join(parts))
 
 
+# 0.1.14 (decyzja użytkownika 22.10, zastępuje ustalenie z 12.10): strażnik zna przekręcenia „zgaś” z rozpoznawania
+# mowy - „zgadź/zgać/gaz … wszystkie” w dowolnym miejscu, „było/znajdź …” tylko jako pierwsze słowo.
+# Tylko kierunek skryptu „wszystkie” - power_direction/has_power_verb (dopytanie, agent zapasowy) bez zmian.
+_ASR_OFF_ANY = ("zgadz", "zgac", "gaz")
+_ASR_OFF_FIRST = ("bylo", "znajdz")
+
+
+def asr_normalize(text: str) -> str:
+    """0.1.14: zamienia przekręcone „zgaś” na właściwe słowo, zanim zdanie trafi do modelu i dalszej logiki.
+    „zgadź/zgać” w dowolnym miejscu; „gaz” tylko tuż przed „(wszystkie) światł…” („Czy gaz jest zakręcony?” zostaje);
+    „było/znajdź” tylko jako pierwsze słowo przed „(wszystkie) światła” („Było światło w kuchni.” zostaje)."""
+    tokens = list(re.finditer(r"\w+", text))
+    words = [_plain(t.group()) for t in tokens]
+    for i in reversed(range(len(tokens))):
+        rest = words[i + 1:]
+        if rest[:1] == ["wszystkie"]:
+            rest = rest[1:]
+        if not (words[i] in ("zgadz", "zgac")
+                or (words[i] == "gaz" and rest and rest[0].startswith("swiatl"))
+                or (i == 0 and words[i] in _ASR_OFF_FIRST and rest and rest[0] == "swiatla")):
+            continue
+        word = "Zgaś" if tokens[i].group()[0].isupper() else "zgaś"
+        text = text[:tokens[i].start()] + word + text[tokens[i].end():]
+    return text
+
+
+def script_text_direction(text: str) -> str | None:
+    """0.1.14: kierunek zdania dla strażnika skryptów - power_direction + przekręcenia ASR słowa „zgaś”."""
+    if (direction := power_direction(text)) is not None:
+        return direction
+    words = _plain(text).split()
+    if any(w.startswith(_OFF_WORDS + _ON_WORDS) for w in words):
+        return None   # oba kierunki naraz - decyduje model, strażnik odrzuca
+    if any(w.startswith(_ASR_OFF_ANY) for w in words) or (words and words[0] in _ASR_OFF_FIRST):
+        return "turn_off"
+    return None
+
+
 def script_verb_errors(actions: list[dict], text: str) -> list[str]:
     """0.1.12: skrypt włączający/gaszący światła wykonujemy tylko, gdy zdanie ma ten sam czasownik.
     v9 uruchamiała „włącz wszystkie” dla „Zgadź wszystkie światła.” (przekręcone „zgaś”) i „Wszystkie światło.”
-    - taka odpowiedź jest odrzucana (a z agentem zapasowym trafia do niego)."""
-    direction = power_direction(text)
+    - taka odpowiedź jest odrzucana (a z agentem zapasowym trafia do niego). 0.1.14: „Zgadź/Gaz/Było wszystkie
+    światła” = zgaś (script_text_direction), więc run zgas_wszystkie_swiatla przechodzi, a wlacz_* nie."""
+    direction = script_text_direction(text)
     errors = []
     for a in actions:
         if a.get("action") != "call_service" or a.get("service") != "script.turn_on":
@@ -239,6 +278,28 @@ def is_list_command(text: str) -> bool:
     HA, a gdy ten nie zrozumie - do agenta zapasowego; model o listach nic nie wie."""
     words = _plain(text).split()
     return any(w in _LIST_WORDS or w == "kup" or w.startswith(_SHOP_PREFIXES) for w in words)
+
+
+# 0.1.14 (rozmowy w tle - „Ale numer.”, „Może jutro po obiedzie.” trafiały do
+# Claude): krótkie zdanie bez czasownika polecenia i bez nazwy urządzenia to szum - kończy się „Nie zrozumiałem”.
+NOISE_MAX_WORDS = 4
+# czasowniki poleceń (początki słów po _plain) - także przekręcenia ASR („gaz”, „zgadź” = zgaś)
+_NOISE_VERBS = _COMMAND_WORDS + ("zmien", "daj", "zrob", "odpal", "zalacz", "odlacz", "przelacz", "zablokuj",
+                                 "odblokuj", "zarygluj", "pokaz", "powiedz", "dodaj", "usun", "otwier", "zamyk",
+                                 "gaz", "zgadz", "zgac", "podkrec", "sciemn", "przygas", "wylacz", "nastaw")
+# słowa urządzeń - zdanie z nimi to polecenie (choćby przekręcone), więc może iść do agenta zapasowego
+_NOISE_DEVICE_WORDS = ("swiat", "lamp", "zarow", "polecz", "polk", "led", "listw", "gniazd", "telewiz", "tv", "ekspres",
+                       "zmywar", "pompk", "plyt", "indukc", "zamek", "zamk", "drzwi", "bram", "garaz", "skrypt",
+                       "temperatur", "wilgot", "reflektor", "kinkiet", "wszystk")
+
+
+def is_noise(text: str) -> bool:
+    """0.1.14: krótki urywek rozmowy w tle (najwyżej NOISE_MAX_WORDS słów) bez czasownika polecenia i bez nazwy
+    urządzenia - takiego zdania nie przekazujemy agentowi zapasowemu. „Gaz światła w salonie.” to NIE szum (światło)."""
+    words = _plain(text).split()
+    if len(words) > NOISE_MAX_WORDS:
+        return False
+    return not any(w.startswith(_NOISE_VERBS) or w.startswith(_NOISE_DEVICE_WORDS) for w in words)
 
 
 def second_line_reason(result: dict, errors: list[str], text: str = "") -> str | None:
@@ -341,10 +402,21 @@ def bulb_index(devices: list[DeviceName] | None) -> dict[str, DeviceName]:
     return {e: d for d in devices or [] if d.relay for e in d.ids}
 
 
+def bulb_groups(devices: list[DeviceName] | None) -> dict[str, frozenset[str]]:
+    """0.1.14: żarówka -> wszystkie żarówki urządzeń, które ją zasilają (pole bulbs). „Włącz tylko tę” gasi sąsiadki
+    z tej grupy, a nie z całego pomieszczenia: w przedpokoju sufit (żarówki 1-2) i półeczki to osobne grupy."""
+    out: dict[str, frozenset[str]] = {}
+    for d in devices or []:
+        for b in d.bulbs:
+            out[b] = out.get(b, frozenset()) | d.bulbs
+    return out
+
+
 def bulb_plan(service: str, ids: list[str], data: dict, index: dict[str, DeviceName],
-              states: dict[str, str | None]) -> BulbPlan | None:
+              states: dict[str, str | None], groups: dict[str, frozenset[str]] | None = None) -> BulbPlan | None:
     """Plan dla light.turn_on/turn_off na samych żarówkach z przełącznikiem. None = to nie jest taka akcja.
-    states: encja (żarówki i przełączniki) -> stan w HA."""
+    states: encja (żarówki i przełączniki) -> stan w HA. groups (0.1.14, bulb_groups): sąsiadki liczone w grupie
+    żarówki; bez groups albo dla żarówki spoza wszystkich bulbs - jak dawniej, całe pomieszczenie."""
     if not ids or not all(e in index for e in ids) or service not in ("light.turn_on", "light.turn_off"):
         return None
     targets = sorted(set(ids))
@@ -359,8 +431,9 @@ def bulb_plan(service: str, ids: list[str], data: dict, index: dict[str, DeviceN
     siblings: list[str] = []
     relays_off: list[str] = []
     if exclusive:
-        areas = {index[e].area for e in targets}
-        others = [e for e, d in index.items() if d.area in areas and e not in targets]
+        def near(e: str) -> bool:
+            return any(e in groups[t] if groups and t in groups else index[e].area == index[t].area for t in targets)
+        others = [e for e in index if e not in targets and near(e)]
         siblings = sorted(e for e in others if index[e].relay in relays)
         relays_off = sorted({index[e].relay for e in others
                              if index[e].relay not in relays and states.get(index[e].relay) == "on"})

@@ -71,31 +71,34 @@ class DomGemmaAgent(conversation.ConversationEntity):
             self._clarify.pop(conv_id, None)
             return await self._list_command(user_input, chat_log, response)
 
+        # 0.1.14: przekręcone „zgaś” poprawione raz, przed modelem - dalej wszędzie to samo zdanie
+        said = logic.asr_normalize(user_input.text)
+
         # odpowiedź na „Które światło w salonie?”: urządzenie z odpowiedzi + miejsca, kierunek z pierwszego polecenia
         clarify = self._clarify.pop(conv_id, None)
-        if clarify and (time.monotonic() - clarify[0] >= CLARIFY_TTL or logic.is_new_command(user_input.text)):
+        if clarify and (time.monotonic() - clarify[0] >= CLARIFY_TTL or logic.is_new_command(said)):
             clarify = None
-        if clarify and logic.answer_kind(user_input.text) == "no":
+        if clarify and logic.answer_kind(said) == "no":
             return self._reply(user_input, chat_log, response, "Dobrze, nic nie robię.")
-        text = logic.followup_text(clarify[2], user_input.text) if clarify else user_input.text
+        text = logic.followup_text(clarify[2], said) if clarify else said
         direction = logic.power_direction(clarify[1]) if clarify else None
 
         try:
             result = await self._ask_server(text)
             if clarify and direction is None:
                 # polecenie bez „włącz/zgaś” - kierunek wskaże model na sklejonym zdaniu
-                both = await self._ask_server(f"{clarify[1].strip().rstrip('.!?')}. {user_input.text}")
+                both = await self._ask_server(f"{clarify[1].strip().rstrip('.!?')}. {said}")
                 direction = logic.actions_direction(both.get("actions") or []) if both.get("valid") else None
             if self._devices is None or time.monotonic() - self._devices_at > DEVICES_TTL:
                 self._devices = await self._fetch_names() or self._devices
                 self._devices_at = time.monotonic()
         except ServerUnavailable as err:
             _LOGGER.warning("DomGemma Server niedostępny (%s)", err)
-            if (forwarded := await self._second_line(user_input, conv_id, user_input.text, "server")) is not None:
+            if (forwarded := await self._second_line(user_input, conv_id, said, "server")) is not None:
                 return forwarded
             if self.entry.options.get(CONF_FALLBACK, True):
                 return await conversation.async_converse(
-                    self.hass, user_input.text, conv_id, user_input.context, language=user_input.language,
+                    self.hass, said, conv_id, user_input.context, language=user_input.language,
                     agent_id=conversation.HOME_ASSISTANT_AGENT, device_id=user_input.device_id,
                     satellite_id=user_input.satellite_id)
             response.async_set_error(intent.IntentResponseErrorCode.UNKNOWN, "Serwer modelu jest niedostępny.")
@@ -112,10 +115,16 @@ class DomGemmaAgent(conversation.ConversationEntity):
         # 0.1.11: model nie dał rady (nie zna urządzenia / odpowiedź odrzucona / dopytuje mimo „włącz”, „zgaś”)
         # -> agent zapasowy, jeśli ustawiony
         # (przy odpowiedzi na dopytanie agent dostaje całość: pierwsze polecenie + odpowiedź, nie sam fragment)
-        full = f"{clarify[1].strip().rstrip('.!?')}. {user_input.text}" if clarify else user_input.text
+        full = f"{clarify[1].strip().rstrip('.!?')}. {said}" if clarify else said
         errors += logic.script_verb_errors(actions, full)   # 0.1.12: „Zgadź wszystkie” nie włącza wszystkich
-        if (reason := logic.second_line_reason(result, errors, full)) and (
-                forwarded := await self._second_line(user_input, conv_id, full, reason)) is not None:
+        reason = logic.second_line_reason(result, errors, full)
+        if reason and not clarify and logic.is_noise(said):
+            # 0.1.14: rozmowa w tle („Ale numer.”) - nie do agenta zapasowego; poza dopytaniem („Lampy.” -> „Półeczka 1.”)
+            _LOGGER.info("Krótkie zdanie bez polecenia (%s) - bez agenta zapasowego", reason)
+            msg = "Nie zrozumiałem, co mam zrobić. Spróbuj powiedzieć to inaczej."
+            response.async_set_error(intent.IntentResponseErrorCode.NO_INTENT_MATCH, msg)
+            return self._finish(user_input, chat_log, response, msg)
+        if reason and (forwarded := await self._second_line(user_input, conv_id, full, reason)) is not None:
             return forwarded
         if errors:
             # treść wypowiedzi i komendy serwera tylko w DEBUG (log INFO trafia do zgłoszeń/diagnostyki)
@@ -128,7 +137,7 @@ class DomGemmaAgent(conversation.ConversationEntity):
         first = actions[0]
         if first["action"] == "clarify":
             # przy ponownym dopytaniu zostaje pierwsze polecenie (w nim jest czasownik)
-            self._clarify[conv_id] = (time.monotonic(), clarify[1] if clarify else user_input.text, first["question"])
+            self._clarify[conv_id] = (time.monotonic(), clarify[1] if clarify else said, first["question"])
             return self._reply(user_input, chat_log, response, first["question"], keep_listening=True)
         if first["action"] == "unsupported":
             return self._reply(user_input, chat_log, response, first.get("reply") or "Nie umiem tego zrobić.")
@@ -300,7 +309,7 @@ class DomGemmaAgent(conversation.ConversationEntity):
         watched = set(index) | {d.relay for d in index.values()}
         states = {e: s.state if (s := self.hass.states.get(e)) else None for e in watched}
         data = a.get("data") or {}
-        plan = logic.bulb_plan(a["service"], a["entity_id"], data, index, states)
+        plan = logic.bulb_plan(a["service"], a["entity_id"], data, index, states, logic.bulb_groups(self._devices))
         if plan is None:
             return None
         _LOGGER.debug("Żarówki %s %s: %s", a["service"], a["entity_id"], plan)

@@ -15,6 +15,10 @@ domu) działającego na telefonie w sieci domowej. Model zwraca akcje, a integra
   wtedy, gdy w zdaniu jest ten sam czasownik — „Zgadź wszystkie światła” (przekręcone „zgaś”) albo samo „Wszystkie
   światło” nie włączą całego domu; taka odpowiedź modelu jest odrzucana i trafia do agenta zapasowego (0.1.12).
   Skrypty z innym poleceniem w nazwie (np. `script.zamknij_i_zgas_wszystko`) nie są tak sprawdzane,
+- poprawia typowe przekręcenia „zgaś” z rozpoznawania mowy („Zgadź”, „Gaz światła”, „Znajdź światła”), zanim zdanie
+  trafi do modelu (0.1.14),
+- krótki urywek rozmowy w tle, bez czasownika polecenia i nazwy urządzenia, kończy się „Nie zrozumiałem”, zamiast
+  trafić do agenta zapasowego; odpowiedzi na dopytanie to nie dotyczy (0.1.14),
 - rozumie odpowiedź na dopytanie („Które światło w salonie?” → „Nad stołem”): urządzenie bierze z odpowiedzi
   i miejsca z pytania, a „włącz”/„zgaś” z pierwszego polecenia,
 - włącza żarówki zasilane przez sterowany przełącznik: po włączeniu przełącznika czeka (do 20 s), aż żarówka się
@@ -24,7 +28,7 @@ domu) działającego na telefonie w sieci domowej. Model zwraca akcje, a integra
 - zmienia kolor świateł (`color_name` / `color_temp_kelvin`) — tylko tych, które lista urządzeń oznacza jako
   kolorowe (`color`); za przełącznikiem kolor trafia do żarówek jak jasność,
 - steruje pojedynczą żarówką za przełącznikiem (pole `relay` w liście urządzeń): „włącz żarówkę 1” włącza
-  przełącznik, zapala tę żarówkę i gasi pozostałe w pomieszczeniu; po zgaszeniu ostatniej świecącej żarówki
+  przełącznik, zapala tę żarówkę i gasi pozostałe z tej samej grupy (pole `bulbs`; bez niego z pomieszczenia, 0.1.14); po zgaszeniu ostatniej świecącej żarówki
   wyłącza też przełącznik,
 - polecenia list („dodaj mleko do listy zakupów”, „wrzuć chleb na listę”, „co jest na liście?”, „trzeba kupić
   jajka”) omijają model: najpierw obsługuje je wbudowany agent HA, a gdy go nie zrozumie — agent zapasowy (np. Claude).

@@ -436,7 +436,17 @@ def _run(*scripts):
     (_run("script.wlacz_wszystkie_swiatla"), "Zgadź wszystkie światła.", 1),
     (_run("script.wlacz_wszystkie_swiatla"), "Wszystkie światło.", 1),
     (_run("script.zgas_wszystkie_swiatla"), "Włącz wszystkie światła.", 1),
-    (_run("script.zgas_wszystkie_swiatla"), "Zgać wszystkie lampy w domu", 1),   # literówka - wolimy dopytać/Claude
+    # 0.1.14 (decyzja 22.10, zastępuje 12.10): przekręcenia ASR „zgaś” gaszą wszystkie, nigdy nie włączają
+    (_run("script.zgas_wszystkie_swiatla"), "Zgać wszystkie lampy w domu", 0),
+    (_run("script.zgas_wszystkie_swiatla"), "Zgadź wszystkie światła.", 0),
+    (_run("script.zgas_wszystkie_swiatla"), "Gaz wszystkie światła.", 0),
+    (_run("script.zgas_wszystkie_swiatla"), "Było wszystkie światła.", 0),
+    (_run("script.zgas_wszystkie_swiatla"), "Znajdź wszystkie światła", 0),
+    (_run("script.wlacz_wszystkie_swiatla"), "Gaz wszystkie światła.", 1),
+    (_run("script.wlacz_wszystkie_swiatla"), "Było wszystkie światła.", 1),
+    # „było/znajdź” nie na początku - bez kierunku (strażnik odrzuca oba skrypty)
+    (_run("script.zgas_wszystkie_swiatla"), "Tu było wszystkie światła.", 1),
+    (_run("script.zgas_wszystkie_swiatla"), "Włącz i zgadź wszystkie", 1),
     # zgodny czasownik (dowolna odmiana / synonim)
     (_run("script.wlacz_wszystkie_swiatla"), "Włącz wszystkie światła.", 0),
     (_run("script.wlacz_wszystkie_swiatla"), "zapal wszystko", 0),
@@ -453,6 +463,40 @@ def test_script_verb_errors(actions, text, bad):
 
 
 @pytest.mark.parametrize("text,expected", [
+    ("Znajdź światła w salonie.", "Zgaś światła w salonie."),
+    ("Było światła w salonie.", "Zgaś światła w salonie."),
+    ("Było wszystkie światła.", "Zgaś wszystkie światła."),
+    ("Gaz światła w salonie.", "Zgaś światła w salonie."),
+    ("Gaz wszystkie światła.", "Zgaś wszystkie światła."),
+    ("gaz światło w kuchni", "zgaś światło w kuchni"),
+    ("Zgadź wszystkie światła.", "Zgaś wszystkie światła."),
+    ("Zgać lampkę, proszę.", "Zgaś lampkę, proszę."),
+    ("Proszę, zgadź światło.", "Proszę, zgaś światło."),
+    # bez zmian: inne zdania z tymi słowami
+    ("Znajdź lampkę.", "Znajdź lampkę."),
+    ("Znajdź telefon.", "Znajdź telefon."),
+    ("Było ciemno.", "Było ciemno."),
+    ("Było światło w kuchni.", "Było światło w kuchni."),
+    ("Kiedyś było światła więcej.", "Kiedyś było światła więcej."),
+    ("Pomóż, znajdź światła.", "Pomóż, znajdź światła."),
+    ("Czy gaz jest zakręcony?", "Czy gaz jest zakręcony?"),
+    ("Włącz gazetę.", "Włącz gazetę."),
+    ("Zgadza się.", "Zgadza się."),
+    ("Zgaś światło.", "Zgaś światło."),
+    ("", ""),
+])
+def test_asr_normalize(text, expected):
+    assert logic.asr_normalize(text) == expected
+
+
+def test_asr_normalize_reaches_verb_guard():
+    said = logic.asr_normalize("Znajdź wszystkie światła.")
+    assert not logic.script_verb_errors(_run("script.zgas_wszystkie_swiatla"), said)
+    assert logic.script_verb_errors(_run("script.wlacz_wszystkie_swiatla"), said)
+    assert logic.power_direction(said) == "turn_off"
+
+
+@pytest.mark.parametrize("text,expected", [
     ("Dodaj mleko do listy zakupów.", True), ("wrzuć chleb na listę", True), ("Co jest na liście zakupów?", True),
     ("Usuń masło z listy.", True), ("Trzeba kupić jajka.", True), ("Kup mleko", True), ("Dopisz ser do zakupów", True),
     ("Co mam dokupić?", True), ("Lista zakupowa", True),
@@ -461,3 +505,57 @@ def test_script_verb_errors(actions, text, bad):
 ])
 def test_is_list_command(text, expected):
     assert logic.is_list_command(text) is expected
+
+
+# ----------------------------------------------------------------------------- 0.1.14 (propozycja v11)
+@pytest.mark.parametrize("text,noise", [
+    # szum, który nie powinien trafiać do agenta zapasowego
+    ("Ale numer.", True), ("Może jutro po obiedzie.", True), ("Am.", True), ("", True), ("No.", True),
+    # polecenia (także przekręcone) i zdania z urządzeniem - mogą iść do agenta zapasowego
+    ("Gaz światła w salonie.", False), ("Weź światło półki.", False), ("Otwieraj hangar.", False),
+    ("Włącz zraszacz w ogrodzie.", False), ("Zgadź wszystkie.", False), ("Półeczka jeden i półeczka 4.", False),
+    ("ustaw na 30%", False), ("Jaka temperatura?", False), ("Lampy.", False),
+    # dłuższe niż NOISE_MAX_WORDS - nie oceniamy jako szum (Claude zdecyduje)
+    ("Trzeba jeszcze wyjść po te zakupy.", False), ("Chyba nie wiem, czy to w ogóle ma sens.", False),
+])
+def test_is_noise(text, noise):
+    assert logic.is_noise(text) is noise
+
+
+P_T = "switch.przedpokoj"
+P_L1, P_L2 = "switch.polki_l1", "switch.polki_l2"
+HALL = logic.names_from_server({
+    "swiatlo_przedpokoju": {"ids": [P_T], "name": "światło w przedpokoju", "kind": "light", "area": "przedpokój",
+                            "bulbs": ["light.p1", "light.p2"]},
+    "swiatlo_poleczkach": {"ids": [P_L1, P_L2], "name": "światło na półeczkach", "kind": "light", "area": "przedpokój",
+                           "bulbs": ["light.b1", "light.b2", "light.b3", "light.b4"], "color": True},
+    "zarowka_1_przedpokoju": {"ids": ["light.p1"], "name": "żarówka 1 w przedpokoju", "kind": "light",
+                              "area": "przedpokój", "relay": P_T, "bulb": 1},
+    "zarowka_2_przedpokoju": {"ids": ["light.p2"], "name": "żarówka 2 w przedpokoju", "kind": "light",
+                              "area": "przedpokój", "relay": P_T, "bulb": 2},
+    **{f"poleczka_{n}": {"ids": [f"light.b{n}"], "name": f"półeczka {n}", "kind": "light", "area": "przedpokój",
+                         "relay": P_L1 if n in (2, 4) else P_L2, "bulb": n, "color": True} for n in (1, 2, 3, 4)},
+})
+HALL_IDX, HALL_GROUPS = logic.bulb_index(HALL), logic.bulb_groups(HALL)
+HALL_LIT = {e: "on" for e in [P_T, P_L1, P_L2, "light.p1", "light.p2", "light.b1", "light.b2", "light.b3", "light.b4"]}
+
+
+def test_bulb_plan_groups_keep_ceiling_and_shelves_apart():
+    # sufit przedpokoju: „tylko żarówka 1” gasi żarówkę 2, ale półeczek (ten sam pokój, inny przełącznik) nie rusza
+    plan = logic.bulb_plan("light.turn_on", ["light.p1"], {}, HALL_IDX, HALL_LIT, HALL_GROUPS)
+    assert plan == logic.BulbPlan([], [], [], ["light.p1"], ["light.p2"], False)
+    # dawne zachowanie (po pomieszczeniu) wyłączyłoby oba kanały półeczek
+    assert logic.bulb_plan("light.turn_on", ["light.p1"], {}, HALL_IDX, HALL_LIT).relays_off == [P_L1, P_L2]
+    # „półeczka 1 i 4” (L2 i L1): sąsiadki 2 i 3 gaśnie, sufit zostaje
+    plan = logic.bulb_plan("light.turn_on", ["light.b1", "light.b4"], {}, HALL_IDX, HALL_LIT, HALL_GROUPS)
+    assert plan.relays_off == [] and plan.siblings_off == ["light.b2", "light.b3"] and P_T not in plan.relays_off
+
+
+def test_bulb_plan_groups_do_not_change_existing_rooms():
+    groups = logic.bulb_groups(BULB_DEVS)
+    lit = {SYP: "on", "light.s1": "on", "light.s2": "on", "light.s3": "on"}
+    assert logic.bulb_plan("light.turn_on", ["light.s1"], {}, IDX, lit, groups) == \
+        logic.bulb_plan("light.turn_on", ["light.s1"], {}, IDX, lit)
+    kitchen = {K1: "on", K2: "on", "light.k1": "on", "light.k2": "on", "light.k3": "on"}   # bez bulbs - po pokoju
+    assert logic.bulb_plan("light.turn_on", ["light.k1"], {}, IDX, kitchen, groups) == \
+        logic.BulbPlan([], [K1], [], ["light.k1"], ["light.k2"], False)
